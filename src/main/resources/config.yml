@@ -1,0 +1,44 @@
+# 存储数据
+storage-data:
+  address: 127.0.0.1:3306
+  database: xx
+  username: xx
+  password: xx
+
+# 大模型配置
+llm:
+  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  model: "qwen-plus"
+  apiKey: "填你自己的API"
+  # 公屏聊天相关
+  chatKeywords: "吗,呢,么,嘛,咋,啥,谁,哪,哪里,哪儿,哪个,多少,多久,为何,为啥,为什么,如何,怎么,怎么办,怎么做,怎么用,怎么样,怎么回事,怎么搞,是不是,是否,能不能,可不可以,？,?"
+  chatResponseCD: 60
+  chatResponseEnabled: true
+  chatResponseSuffix: "(可以通过菜单直接与我对话哦~，这个后缀可以修改成任意内容)"
+
+# 助手配置
+assistant:
+  name: "ExAI"
+
+# GUI配置
+gui:
+  title: "ExAI 对话助手"
+  charNumPerLine: 30
+
+# 知识库配置
+knowledge:
+  minSimilarity: 0.35
+  maxPendingKnowledgePerPlayer: 30
+  knowledgeReview:
+    opPermission: "exai.op"
+    rewards:
+      vault:
+        enabled: true
+        amount: 100
+        currencyName: "微光币"
+      items:
+        - material: DIAMOND
+          amount: 1
+        - material: APPLE
+          amount: 5
+
