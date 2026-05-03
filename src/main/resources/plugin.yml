@@ -1,0 +1,9 @@
+name: ExAI
+version: '${project.version}'
+main: com.exai.ExAI
+softdepend:
+  - Vault
+commands:
+  exai:
+    description: ExAI插件主命令
+    usage: /exai <reload|opengui|question|help>
