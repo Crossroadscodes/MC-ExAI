@@ -69,4 +69,9 @@ public class KnowledgeQueue {
         }
         return false;
     }
+
+    public static void clearAll() {
+        pendingQueue.clear();
+        entryToDbId.clear();
+    }
 }
