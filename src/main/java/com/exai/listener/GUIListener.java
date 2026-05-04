@@ -42,7 +42,7 @@ public class GUIListener implements Listener {
             }
         }
 
-        if (title.equals("§cExAI 知识审核")) {
+        if (title.equals(KnowledgeReviewGUI.getGUI_TITLE())) {
             event.setCancelled(true);
             ItemStack clicked = event.getCurrentItem();
             if (clicked == null) {

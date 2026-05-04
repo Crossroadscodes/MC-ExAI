@@ -18,7 +18,7 @@ import java.util.List;
 
 public class KnowledgeReviewGUI {
     private static final int PAGE_SIZE = 18;
-    private static String getGUI_TITLE() {
+    public static String getGUI_TITLE() {
         return "§c" + Config.assistantName + " 知识审核";
     }
 

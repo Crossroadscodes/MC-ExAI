@@ -180,6 +180,7 @@ public class DataUtils {
     }
 
     public static void loadAllPendingKnowledge() {
+        com.exai.data.KnowledgeQueue.clearAll();
         String querySQL = "SELECT id, question, answer, submitter, timestamp FROM ex_pending_knowledge";
         try (Connection connection = DataContainer.sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL);
