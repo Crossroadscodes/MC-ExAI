@@ -1,7 +1,7 @@
 package com.exai.gui;
 
-import com.exai.ExAI;
 import com.exai.config.Config;
+import com.exai.i18n.Lang;
 import com.exai.utils.CDUtils;
 import com.exai.utils.MaterialCompat;
 import org.bukkit.Bukkit;
@@ -10,32 +10,35 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
-import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.Collections;
 
 public class ChestGUI {
+    public static final int GUI_SIZE = 45;
+
+    public static final int SLOT_CHAT = 22;
+    public static final int SLOT_SUBMIT = 38;
+    public static final int SLOT_REVIEW = 39;
+    public static final int SLOT_INFO = 40;
+    public static final int SLOT_HISTORY = 41;
+    public static final int SLOT_KB = 42;
+
     public static String getGUI_TITLE() {
-        return Config.config.getString("gui.title", Config.assistantName + " 对话助手");
+        return Config.config.getString("gui.title", Lang.get("gui.default-title", Config.assistantName));
     }
 
     public static void open(Player player) {
-        Inventory inventory = Bukkit.createInventory(null, 27, getGUI_TITLE());
+        Inventory inventory = Bukkit.createInventory(null, GUI_SIZE, getGUI_TITLE());
 
         boolean cdEnded = CDUtils.isDialogueCDEnd(player);
         long cdRemaining = CDUtils.getDialogueCDRemaining(player);
 
-        ItemStack button = createButton(cdEnded, cdRemaining);
-        inventory.setItem(13, button);
-
-        ItemStack info = createInfoItem();
-        inventory.setItem(22, info);
-
-        ItemStack submitButton = createSubmitButton();
-        inventory.setItem(19, submitButton);
-
-        ItemStack reviewButton = createReviewButton();
-        inventory.setItem(20, reviewButton);
+        inventory.setItem(SLOT_CHAT, createButton(cdEnded, cdRemaining));
+        inventory.setItem(SLOT_INFO, createInfoItem());
+        inventory.setItem(SLOT_SUBMIT, createSubmitButton());
+        inventory.setItem(SLOT_REVIEW, createReviewButton());
+        inventory.setItem(SLOT_HISTORY, createHistoryButton());
+        inventory.setItem(SLOT_KB, createKnowledgeBaseButton());
 
         player.openInventory(inventory);
     }
@@ -45,12 +48,14 @@ public class ChestGUI {
         ItemMeta meta = item.getItemMeta();
 
         if (cdEnded) {
-            meta.setDisplayName("§a§l[ 开始对话 ]");
+            meta.setDisplayName(Lang.get("gui.start-chat"));
         } else {
-            meta.setDisplayName("§c§l[ 冷却中: " + cdRemaining + "秒 ]");
+            meta.setDisplayName(Lang.get("gui.cooldown", cdRemaining));
         }
 
-        meta.setLore(Collections.singletonList(cdEnded ? "§7点击开始与" + Config.assistantName + "对话" : "§7请等待冷却结束"));
+        meta.setLore(Collections.singletonList(cdEnded
+                ? Lang.get("gui.start-chat-lore", Config.assistantName)
+                : Lang.get("gui.cooldown-lore")));
         item.setItemMeta(meta);
         return item;
     }
@@ -58,11 +63,11 @@ public class ChestGUI {
     private static ItemStack createInfoItem() {
         ItemStack item = new ItemStack(Material.PAPER);
         ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName("§e⚠ 单轮对话须知");
+        meta.setDisplayName(Lang.get("gui.info-title"));
         meta.setLore(java.util.Arrays.asList(
-                "§7仅支持单轮对话",
-                "§7输入问题后自动结束",
-                "§7CD: " + Config.config.getInt("chatResponseCD") + "秒"
+                Lang.get("gui.info-line1"),
+                Lang.get("gui.info-line2"),
+                Lang.get("gui.info-line3", Config.config.getInt("chatResponseCD"))
         ));
         item.setItemMeta(meta);
         return item;
@@ -71,10 +76,10 @@ public class ChestGUI {
     private static ItemStack createSubmitButton() {
         ItemStack item = new ItemStack(MaterialCompat.BOOK_AND_QUILL());
         ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName("§a§l[ 上传知识 ]");
+        meta.setDisplayName(Lang.get("gui.upload-button"));
         meta.setLore(java.util.Arrays.asList(
-                "§7点击获取知识上传书本",
-                "§7编辑后签署即可提交"
+                Lang.get("gui.upload-lore1"),
+                Lang.get("gui.upload-lore2")
         ));
         item.setItemMeta(meta);
         return item;
@@ -83,10 +88,34 @@ public class ChestGUI {
     private static ItemStack createReviewButton() {
         ItemStack item = new ItemStack(MaterialCompat.ITEM_FRAME());
         ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName("§6§l[ 审核员审核 ]");
+        meta.setDisplayName(Lang.get("gui.review-button"));
         meta.setLore(java.util.Arrays.asList(
-                "§7点击打开知识审核界面",
-                "§7仅拥有权限可用"
+                Lang.get("gui.review-lore1"),
+                Lang.get("gui.review-lore2")
+        ));
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private static ItemStack createHistoryButton() {
+        ItemStack item = new ItemStack(Material.PAPER);
+        ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName(Lang.get("gui.history-button"));
+        meta.setLore(java.util.Arrays.asList(
+                Lang.get("gui.history-lore1"),
+                Lang.get("gui.history-lore2")
+        ));
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private static ItemStack createKnowledgeBaseButton() {
+        ItemStack item = new ItemStack(Material.BOOKSHELF);
+        ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName(Lang.get("gui.kb-button"));
+        meta.setLore(java.util.Arrays.asList(
+                Lang.get("gui.kb-lore1"),
+                Lang.get("gui.kb-lore2")
         ));
         item.setItemMeta(meta);
         return item;
@@ -95,9 +124,9 @@ public class ChestGUI {
     public static void startDialogue(Player player) {
         GUIManager.enterDialogueMode(player);
         player.closeInventory();
-        player.sendMessage("§e═══════════════════════════");
-        player.sendMessage("§a请在聊天栏输入您的问题");
-        player.sendMessage("§7" + Config.assistantName + "将在回复后自动退出对话模式");
-        player.sendMessage("§e═══════════════════════════");
+        player.sendMessage(Lang.get("gui.divider"));
+        player.sendMessage(Lang.get("gui.dialogue-start-tip1"));
+        player.sendMessage(Lang.get("gui.dialogue-start-tip2", Config.assistantName));
+        player.sendMessage(Lang.get("gui.divider"));
     }
 }

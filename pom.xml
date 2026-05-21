@@ -6,13 +6,12 @@
 
   <groupId>com.exai</groupId>
   <artifactId>ExAI</artifactId>
-  <version>1.0-SNAPSHOT</version>
+  <version>1.0.1</version>
   <packaging>jar</packaging>
 
   <name>ExAI</name>
 
   <properties>
-    <jackson.version>2.12.7.1</jackson.version>
     <java.version>1.8</java.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
@@ -38,6 +37,40 @@
             <goals>
               <goal>shade</goal>
             </goals>
+            <configuration>
+              <minimizeJar>true</minimizeJar>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <artifactSet>
+                <excludes>
+                  <exclude>org.spigotmc:spigot-api</exclude>
+                  <exclude>net.milkbowl.vault:vault-api</exclude>
+                  <exclude>org.projectlombok:lombok</exclude>
+                </excludes>
+              </artifactSet>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>META-INF/MANIFEST.MF</exclude>
+                    <exclude>META-INF/maven/**</exclude>
+                    <exclude>META-INF/versions/**</exclude>
+                    <exclude>META-INF/LICENSE*</exclude>
+                    <exclude>META-INF/NOTICE*</exclude>
+                    <exclude>META-INF/DEPENDENCIES</exclude>
+                    <exclude>module-info.class</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+              <relocations>
+                <relocation>
+                  <pattern>com.zaxxer.hikari</pattern>
+                  <shadedPattern>com.exai.shaded.hikari</shadedPattern>
+                </relocation>
+              </relocations>
+            </configuration>
           </execution>
         </executions>
       </plugin>
@@ -45,7 +78,7 @@
     <resources>
         <resource>
             <directory>src/main/resources</directory>
-            <filtering>true</filtering> <!-- 禁用过滤 -->
+            <filtering>true</filtering>
         </resource>
     </resources>
   </build>
@@ -65,7 +98,7 @@
       <dependency>
           <groupId>org.projectlombok</groupId>
           <artifactId>lombok</artifactId>
-          <version>1.18.36</version> <!-- 支持 Java 21+ -->
+          <version>1.18.36</version>
           <scope>provided</scope>
       </dependency>
       <dependency>
@@ -82,24 +115,15 @@
           <systemPath>${project.basedir}/libs/Vault.jar</systemPath>
       </dependency>
       <dependency>
-          <groupId>com.openai</groupId>
-          <artifactId>openai-java</artifactId>
-          <version>4.14.0</version>
-      </dependency>
-      <dependency>
-          <groupId>org.apache.poi</groupId>
-          <artifactId>poi</artifactId>
-          <version>5.2.3</version>
-      </dependency>
-      <dependency>
-          <groupId>org.apache.poi</groupId>
-          <artifactId>poi-ooxml</artifactId>
-          <version>5.2.3</version>
-      </dependency>
-      <dependency>
           <groupId>com.zaxxer</groupId>
           <artifactId>HikariCP</artifactId>
           <version>4.0.3</version>
+      </dependency>
+      <dependency>
+          <groupId>com.google.code.gson</groupId>
+          <artifactId>gson</artifactId>
+          <version>2.8.9</version>
+          <scope>provided</scope>
       </dependency>
   </dependencies>
 </project>

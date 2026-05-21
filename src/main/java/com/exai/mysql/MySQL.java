@@ -1,6 +1,7 @@
 package com.exai.mysql;
 
 import com.exai.config.Config;
+import com.exai.i18n.Lang;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.bukkit.Bukkit;
@@ -34,7 +35,8 @@ public class MySQL extends Database {
         config.addDataSourceProperty("elideSetAutoCommits", "true");
         config.addDataSourceProperty("maintainTimeStats", "false");
         dataSource = new HikariDataSource(config);
-        Bukkit.getServer().getConsoleSender().sendMessage("§7[§a§l" + Config.assistantName + "§7] §a成功连接Mysql");
+        Bukkit.getServer().getConsoleSender().sendMessage(
+                Lang.get("runtime.mysql-connected", Config.assistantName));
     }
 
     public HikariDataSource getDataSource() {
@@ -48,6 +50,4 @@ public class MySQL extends Database {
         }
         return connection;
     }
-
-    
 }

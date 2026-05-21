@@ -2,10 +2,11 @@ package com.exai.utils;
 
 import com.exai.config.Config;
 import com.exai.data.DataContainer;
+import com.exai.i18n.Lang;
 import org.bukkit.entity.Player;
 
 public class CDUtils {
-    public static boolean isCDEnd(Player player){
+    public static boolean isCDEnd(Player player) {
         String playerUuid = player.getUniqueId().toString();
         long currentTime = System.currentTimeMillis();
         long lastTime = DataContainer.playerCDMap.getOrDefault(playerUuid, 0L);
@@ -13,8 +14,8 @@ public class CDUtils {
         if (currentTime - lastTime >= cooldown) {
             DataContainer.playerCDMap.put(playerUuid, currentTime);
             return true;
-        }else{
-            player.sendMessage("§c【系统提示】§f" + Config.assistantName + "：请求频繁，请稍后再试。");
+        } else {
+            player.sendMessage(Lang.get("runtime.rate-limit", Config.assistantName));
             return false;
         }
     }
@@ -44,14 +45,14 @@ public class CDUtils {
         DataContainer.dialogueCDMap.put(playerUuid, System.currentTimeMillis());
     }
 
-    public static boolean isPlayerChatCDEnd(){
+    public static boolean isPlayerChatCDEnd() {
         long currentTime = System.currentTimeMillis();
         long lastTime = DataContainer.playerChatResponseCD;
         long cooldown = Config.chatResponseCD * 1000L;
         if (currentTime - lastTime >= cooldown) {
             DataContainer.playerChatResponseCD = currentTime;
             return true;
-        }else{
+        } else {
             return false;
         }
     }

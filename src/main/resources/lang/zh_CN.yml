@@ -1,0 +1,192 @@
+# ExAI 简体中文语言文件
+# 使用 & 作为颜色符号，会自动替换为 §
+# 占位符 {0} {1} ... 按顺序替换
+
+prefix:
+  system: "&c【系统提示】 &f"
+  assistant: "&c【{0}】&f"
+  assistant-broadcast: "&c【{0}】"
+
+# 命令
+command:
+  no-permission: "&c【系统提示】 &f你没有权限这么做！"
+  reload-success: "&c【系统提示】&f{0}重载完毕"
+  question-usage: "&c用法: /exai question <玩家> <问题>"
+  player-not-found: "&c找不到玩家: {0}"
+  question-prefix: "&c【系统提示】&f{0}：{1}"
+  help-header: "&6════ &e&lExAI 命令帮助 &6════"
+  help-footer: "&6═══════════════════════"
+  help-help: "&e/exai help &7- 显示此帮助信息"
+  help-reload: "&e/exai reload &7- 重载插件配置"
+  help-opengui: "&e/exai opengui &7- 打开ExAI GUI界面"
+  help-question: "&e/exai question <玩家> <问题> &7- 向指定玩家发送问题"
+
+# GUI
+gui:
+  default-title: "{0} 对话助手"
+  review-title: "&c{0} 知识审核"
+  divider: "&e═══════════════════════════"
+  divider-green: "&a═══════════════════════════"
+  dialogue-start-tip1: "&a请在聊天栏输入您的问题"
+  dialogue-start-tip2: "&7{0}将在回复后自动退出对话模式"
+  start-chat: "&a&l[ 开始对话 ]"
+  cooldown: "&c&l[ 冷却中: {0}秒 ]"
+  start-chat-lore: "&7点击开始与{0}对话"
+  cooldown-lore: "&7请等待冷却结束"
+  info-title: "&e⚠ 单轮对话须知"
+  info-line1: "&7仅支持单轮对话"
+  info-line2: "&7输入问题后自动结束"
+  info-line3: "&7CD: {0}秒"
+  upload-button: "&a&l[ 上传知识 ]"
+  upload-lore1: "&7点击获取知识上传书本"
+  upload-lore2: "&7编辑后点击完成即可提交"
+  review-button: "&6&l[ 审核员审核 ]"
+  review-lore1: "&7点击打开知识审核界面"
+  review-lore2: "&7仅拥有权限可用"
+  review-no-permission: "&c您没有权限使用此功能"
+  prev-page: "◀ 上一页"
+  next-page: "下一页 ▶"
+  page-info: "&e第 {0} / {1} 页"
+  page-pending-count: "&7待审核知识数: &f{0}"
+  page-page-size: "&7每页显示: &f{0} 条"
+  close: "&c✖ 关闭"
+  close-lore: "&7返回主界面"
+  nav-disabled: "&7无可用页面"
+  knowledge-title: "&e知识 #{0}"
+  knowledge-submitter: "&7提交者: &f{0}"
+  knowledge-question: "&6问：&f{0}"
+  knowledge-answer: "&6答：&f{0}"
+  knowledge-left-click: "&a左键：批准"
+  knowledge-right-click: "&c右键：拒绝"
+  approved: "&a[{0}] 已批准知识并发放奖励！"
+  rejected: "&c[{0}] 已拒绝知识: {1}"
+  history-button: "&b&l[ 历史对话 ]"
+  history-lore1: "&7点击查看玩家提问与回复历史"
+  history-lore2: "&7仅OP可用"
+  history-title: "&b{0} 历史对话"
+  history-item-title: "&e记录 #{0} &7- &f{1}"
+  history-time: "&7时间: &f{0}"
+  history-source: "&7来源: &f{0}"
+  history-total-count: "&7总记录数: &f{0}"
+  history-left-click: "&a左键：编辑后加入知识库"
+  history-right-click: "&c右键：删除此记录"
+  history-shift-click: "&eShift+左键：查看完整内容"
+  history-detail-player: "&a@{0} &7于 {1}"
+  history-deleted: "&c[{0}] 已删除历史记录 #{1}"
+  kb-button: "&d&l[ 知识库管理 ]"
+  kb-lore1: "&7点击查看与修改已加入的知识"
+  kb-lore2: "&7仅OP可用"
+  kb-title: "&d{0} 知识库管理"
+  kb-item-title: "&e知识 #{0}"
+  kb-total-count: "&7总知识数: &f{0}"
+  kb-left-click: "&a左键：编辑此知识"
+  kb-right-click: "&c右键：删除此知识"
+  kb-shift-click: "&eShift+左键：查看完整内容"
+  kb-detail-title: "&d知识 #{0}"
+  kb-deleted: "&c[{0}] 已删除知识 #{1} 并重载知识库"
+
+# 上传书本
+book:
+  title: "&a&l[ 知识上传 ]"
+  template: "问：请在这里输入您的问题\n答：请在这里输入答案"
+  pattern-prefix-q: "问："
+  pattern-prefix-a: "答："
+  upload-tip1: "&e请在背包中找到这本书"
+  upload-tip2: "&e编辑内容后点击完成按钮即可提交"
+  upload-tip3: "&7格式：问：xxx 答：xxx"
+  edit-first: "&c[{0}] 请先编辑书本内容！"
+  format-error: "&c[{0}] 格式错误！请使用格式：问：xxx 答：xxx"
+  submit-success-1: "&a[{0}] 知识已提交成功！"
+  submit-success-2: "&e等待OP审核..."
+  submit-fail: "&c[{0}] 提交失败：此问题已存在或已达到每日上传上限！"
+  history-edit-title: "&b&l[ 历史对话编辑 ]"
+  history-edit-tip1: "&e请在书本中修改问题与回答"
+  history-edit-tip2: "&e点击完成按钮后将直接写入知识库"
+  history-promote-success: "&a[{0}] 知识已加入并重载知识库"
+  kb-edit-title: "&d&l[ 知识库编辑 ]"
+  kb-edit-tip1: "&e请在书本中修改问题与回答"
+  kb-edit-tip2: "&e点击完成按钮后将覆盖原有知识并重载"
+  kb-edit-success: "&a[{0}] 知识 #{1} 已更新并重载知识库"
+  kb-duplicate: "&c[{0}] 知识库中已存在相同问题"
+
+# 聊天
+chat:
+  player-prefix: "&a&l@{0} &f问题: {1}"
+  response: "&c【{0}】&f{1}"
+  broadcast: "&c【{0}】&a@{1}&f{2}{3}"
+
+# 奖励
+reward:
+  vault: "&a[{0}] 获得 &e{1} &a{2}奖励！"
+  item: "&a[{0}] 获得 &e{1}个 {2} &a奖励！"
+
+# 助手默认回复（建议保留中文，让大模型用中文回答）
+service:
+  llm:
+    empty: "助手无响应"
+    error: "系统错误"
+
+# 大模型 Prompt 模板（修改后影响 AI 回答语言，谨慎修改）
+prompt:
+  base-role: "你是一个MC游戏助手，你叫{0}，你需要解答玩家在游戏中遇到的问题，回答的时候不要带*等特殊符号，不要换行"
+  strict-with-docs: "严格参考以下搜索到的信息回答，如果没有依据一定不要编造回答，直接回复'抱歉，我找不到相关信息，联系服务器管理员补充相关知识'：\n"
+  loose-with-docs: "参考以下信息回答，如果没有依据不要编造回答：\n"
+  broadcast-no-docs: "你是一个MC游戏助手，你叫{0}。当玩家提问时，如果不知道答案，请直接回复'抱歉，我找不到相关信息'。回答尽量精简，不超过100字。\n请用中文回答：\n玩家问："
+  broadcast-role: "你是一个MC游戏助手，你叫{0}，你需要解答玩家在游戏中遇到的问题，回答的时候不要带*等特殊符号，不要换行，回答尽量精简，不超过100字"
+  player-asks: "\n玩家问："
+  context: "（当前状态：{0}）"
+  answer-in-lang: "\n请用中文回答："
+
+# 动作识别（用于建议玩家下一步操作）
+action:
+  go: "前往"
+  use: "使用物品"
+  talk: "与NPC交谈"
+  collect: "收集物品"
+  attack: "战斗"
+  quest: "完成任务"
+  default: "继续探索"
+  kw-go: "去"
+  kw-use: "使用"
+  kw-talk: "对话"
+  kw-collect: "收集"
+  kw-attack: "攻击"
+  kw-quest: "任务"
+
+# 冷却 & 数据库连接
+runtime:
+  rate-limit: "&c【系统提示】&f{0}：请求频繁，请稍后再试。"
+  mysql-connected: "&7[&a&l{0}&7] &a成功连接Mysql"
+  added-document: "已添加文档: {0} (ID: {1})"
+
+# 知识分类（用于检索召回，关键词是从玩家提问里匹配的）
+category:
+  location: "地点"
+  quest: "任务"
+  item: "物品"
+  skill: "技能"
+  npc: "NPC"
+  general: "通用"
+  kw-location: "哪里,位置,去哪"
+  kw-quest: "任务,怎么完成"
+  kw-item: "怎么获得,装备"
+  kw-skill: "技能,怎么使用"
+  kw-npc: "NPC,谁"
+  enhanced-query: "玩家问: {0}。当前上下文: {1}"
+
+# 启动日志
+log:
+  enable-success: "ExAI插件启动成功！"
+  enable-fail: "ExAI插件启动失败！"
+  log-table-ok: "玩家问答表创建成功！"
+  pending-count-table-ok: "待审核知识计数表创建成功！"
+  pending-knowledge-table-ok: "待审核知识表创建成功！"
+  loaded-pending: "已从数据库加载 {0} 条待审核知识"
+  rebuilt-state: "已重建玩家待审核计数状态"
+  loaded-docs: "成功加载 {0} 个文档"
+  read-gamehelp: "从数据文件夹读取gamehelp.txt..."
+  saved-default-gamehelp: "已保存默认gamehelp.txt到数据文件夹"
+  source-broadcast: "公屏聊天"
+  source-private: "箱子对话"
+  source-command: "单独聊天"
+  knowledge-category: "游戏知识"

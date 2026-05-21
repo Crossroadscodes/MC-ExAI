@@ -5,6 +5,7 @@ import com.exai.config.Config;
 import com.exai.data.DataContainer;
 import com.exai.data.KnowledgeQueue;
 import com.exai.entity.KnowledgeEntry;
+import com.exai.i18n.Lang;
 import com.exai.utils.DataUtils;
 import org.bukkit.Bukkit;
 
@@ -17,15 +18,25 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class KnowledgeManager {
-    private static final Pattern KNOWLEDGE_PATTERN = Pattern.compile("问：(.+?)[\\n ]+答：(.*)");
     private static Map<String, String> submitterToUuid = new HashMap<>();
 
     public static String getTemplateBookContent() {
-        return "问：请在这里输入您的问题\n答：请在这里输入答案";
+        return Lang.get("book.template");
+    }
+
+    public static String buildBookContent(String question, String answer) {
+        return Lang.get("book.pattern-prefix-q") + question + "\n" +
+               Lang.get("book.pattern-prefix-a") + answer;
+    }
+
+    private static Pattern buildPattern() {
+        String q = Pattern.quote(Lang.get("book.pattern-prefix-q"));
+        String a = Pattern.quote(Lang.get("book.pattern-prefix-a"));
+        return Pattern.compile(q + "(.+?)[\\n ]+" + a + "(.*)", Pattern.DOTALL);
     }
 
     public static KnowledgeEntry parseAndValidate(String content) {
-        Matcher matcher = KNOWLEDGE_PATTERN.matcher(content);
+        Matcher matcher = buildPattern().matcher(content);
         if (matcher.find()) {
             String question = matcher.group(1).trim();
             String answer = matcher.group(2).trim();
@@ -61,8 +72,8 @@ public class KnowledgeManager {
         return true;
     }
 
-    public static void approveKnowledge(int page, int index) {
-        KnowledgeEntry entry = KnowledgeQueue.getPage(page, 18).get(index);
+    public static void approveKnowledge(int page, int index, int pageSize) {
+        KnowledgeEntry entry = KnowledgeQueue.getPage(page, pageSize).get(index);
         if (entry != null) {
             int dbId = KnowledgeQueue.getDbId(entry);
             DataUtils.deletePendingKnowledgeAsync(dbId);
@@ -78,8 +89,8 @@ public class KnowledgeManager {
         }
     }
 
-    public static void rejectKnowledge(int page, int index) {
-        KnowledgeEntry entry = KnowledgeQueue.getPage(page, 18).get(index);
+    public static void rejectKnowledge(int page, int index, int pageSize) {
+        KnowledgeEntry entry = KnowledgeQueue.getPage(page, pageSize).get(index);
         if (entry != null) {
             int dbId = KnowledgeQueue.getDbId(entry);
             DataUtils.deletePendingKnowledgeAsync(dbId);
@@ -90,15 +101,15 @@ public class KnowledgeManager {
                 DataUtils.subPendingCountAsync(submitterUuid);
                 submitterToUuid.remove(submitterName);
             }
-            KnowledgeQueue.removeByIndex(page, index, 18);
+            KnowledgeQueue.removeByIndex(page, index, pageSize);
         }
     }
 
     private static void writeToGameHelp(KnowledgeEntry entry) {
         File gameHelpFile = new File(ExAI.getInstance().getDataFolder(), "gamehelp.txt");
         try (FileWriter writer = new FileWriter(gameHelpFile, true)) {
-            writer.write("问：" + entry.getQuestion() + "\n");
-            writer.write("答：" + entry.getAnswer() + "\n");
+            writer.write(Lang.get("book.pattern-prefix-q") + entry.getQuestion() + "\n");
+            writer.write(Lang.get("book.pattern-prefix-a") + entry.getAnswer() + "\n");
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -113,6 +124,6 @@ public class KnowledgeManager {
         if (answer.length() > 15) {
             answer = answer.substring(0, 15) + "...";
         }
-        return "§e问：§f" + question + "\n§e答：§f" + answer;
+        return Lang.get("gui.knowledge-question", question) + "\n" + Lang.get("gui.knowledge-answer", answer);
     }
 }
