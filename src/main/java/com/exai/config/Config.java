@@ -5,6 +5,7 @@ import com.exai.data.DataContainer;
 import com.exai.embedding.DashScopeEmbedding;
 import com.exai.embedding.VectorStore;
 import com.exai.generators.AnswerGenerator;
+import com.exai.i18n.Lang;
 import com.exai.listener.PlayerListener;
 import com.exai.managers.GameDataLoader;
 import com.exai.managers.GameKnowledgeBase;
@@ -36,10 +37,14 @@ public class Config {
     public static String chatKeywords;
     public static int chatResponseCD;
     public static String chatResponseSuffix;
+    public static String language;
+
     public static void loadAll() {
         try {
             loadConfig();
             config = ExAI.getInstance().getConfig();
+            language = config.getString("language", "zh_CN");
+            Lang.load(language);
             address = config.getString("storage-data.address");
             database = config.getString("storage-data.database");
             username = config.getString("storage-data.username");
@@ -56,10 +61,10 @@ public class Config {
             chatKeywords = config.getString("llm.chatKeywords", "吗,呢,什么,怎么,如何,为什么,？,?");
             chatResponseCD = config.getInt("llm.chatResponseCD", 60);
             chatResponseEnabled = config.getBoolean("llm.chatResponseEnabled", true);
-            chatResponseSuffix = config.getString("llm.chatResponseSuffix", "(可以通过ESC菜单直接与我对话哦~)");
+            chatResponseSuffix = config.getString("llm.chatResponseSuffix", "");
             minSimilarity = config.getDouble("knowledge.minSimilarity", 0.35);
             maxPendingKnowledgePerPlayer = config.getInt("knowledge.maxPendingKnowledgePerPlayer", 30);
-            currencyName = config.getString("knowledge.knowledgeReview.rewards.vault.currencyName", "微光币");
+            currencyName = config.getString("knowledge.knowledgeReview.rewards.vault.currencyName", "Coin");
             assistantName = config.getString("assistant.name", "ExAI");
             DashScopeEmbedding embeddingService = new DashScopeEmbedding(apiKey);
             VectorStore vectorStore = new VectorStore(embeddingService);
@@ -69,9 +74,9 @@ public class Config {
             LLMService llm = new LLMService(apiKey, llmBaseUrl, llmModel);
             generator = new AnswerGenerator(llm);
             PlayerListener.registerIfNeeded(ExAI.getInstance());
-            ExAI.getInstance().getLogger().info("ExAI插件启动成功！");
+            ExAI.getInstance().getLogger().info(Lang.get("log.enable-success"));
         } catch (Exception e) {
-            ExAI.getInstance().getLogger().info("ExAI插件启动失败！");
+            ExAI.getInstance().getLogger().info(Lang.get("log.enable-fail"));
             e.printStackTrace();
         }
     }
@@ -80,6 +85,20 @@ public class Config {
         ExAI.getInstance().saveDefaultConfig();
         ExAI.getInstance().reloadConfig();
     }
+
+    public static void reloadKnowledgeBaseOnly() {
+        try {
+            String apiKey = config.getString("llm.apiKey");
+            DashScopeEmbedding embeddingService = new DashScopeEmbedding(apiKey);
+            VectorStore vectorStore = new VectorStore(embeddingService);
+            GameDataLoader dataLoader = new GameDataLoader();
+            knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity);
+            knowledgeBase.initializeKnowledgeBase();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
     public static YamlConfiguration loadConfigYaml(JavaPlugin plugin, String name) {
         File file = new File(plugin.getDataFolder(), name + ".yml");
 

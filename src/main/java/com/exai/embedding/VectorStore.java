@@ -1,6 +1,7 @@
 package com.exai.embedding;
 
 import com.exai.entity.GameDocument;
+import com.exai.i18n.Lang;
 import lombok.Setter;
 
 import java.util.ArrayList;
@@ -21,7 +22,7 @@ public class VectorStore {
         String text = doc.getContent();
         doc.setEmbedding(embeddingService.generateEmbedding(text));
         documents.add(doc);
-        System.out.println("已添加文档: " + doc.getCategory() + " (ID: " + doc.getId() + ")");
+        System.out.println(Lang.get("runtime.added-document", doc.getCategory(), doc.getId()));
     }
 
     public List<GameDocument> searchSimilar(double[] queryEmbedding, int topK) {

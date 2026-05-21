@@ -4,6 +4,7 @@ import com.exai.ExAI;
 import com.exai.config.Config;
 import com.exai.entity.Answer;
 import com.exai.entity.PlayerQuestion;
+import com.exai.i18n.Lang;
 import com.exai.utils.CDUtils;
 import com.exai.utils.DataUtils;
 import org.bukkit.Bukkit;
@@ -22,8 +23,8 @@ public class PlayerListener implements Listener {
             Bukkit.getPluginManager().registerEvents(new PlayerListener(), plugin);
             isRegistered = true;
         }
-
     }
+
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlayerChat(AsyncPlayerChatEvent event) {
         if (!Config.chatResponseEnabled) {
@@ -42,11 +43,12 @@ public class PlayerListener implements Listener {
         Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> {
             try {
                 PlayerQuestion pQuestion = new PlayerQuestion(message);
-
                 Answer answer = Config.generator.generateBrodcastAnswer(pQuestion, false);
                 String documents = String.join(", ", answer.getSources());
-                Bukkit.broadcastMessage("§c【" + Config.assistantName + "】" + "§a@" + playerName +"§f"+ answer.getAnswer() + Config.chatResponseSuffix);
-                DataUtils.insertLog(playerName, message, answer.getAnswer(), documents, "公屏聊天");
+                Bukkit.broadcastMessage(Lang.get("chat.broadcast",
+                        Config.assistantName, playerName, answer.getAnswer(),
+                        Config.chatResponseSuffix == null ? "" : Config.chatResponseSuffix));
+                DataUtils.insertLog(playerName, message, answer.getAnswer(), documents, Lang.get("log.source-broadcast"));
 
             } catch (Exception e) {
                 e.printStackTrace();
@@ -54,14 +56,13 @@ public class PlayerListener implements Listener {
         });
     }
 
-private boolean isQuestion(String message) {
+    private boolean isQuestion(String message) {
         String[] keywords = Config.chatKeywords.split(",");
         for (String keyword : keywords) {
             if (message.contains(keyword)) {
                 return true;
             }
         }
-
         return false;
     }
 }

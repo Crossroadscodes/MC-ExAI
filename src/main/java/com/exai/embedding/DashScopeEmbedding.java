@@ -1,9 +1,8 @@
 package com.exai.embedding;
 
-import com.openai.client.OpenAIClient;
-import com.openai.client.okhttp.OpenAIOkHttpClient;
-import com.openai.models.embeddings.CreateEmbeddingResponse;
-import com.openai.models.embeddings.EmbeddingCreateParams;
+import com.exai.utils.HttpJsonClient;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,11 +10,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class DashScopeEmbedding {
-    private String apiKey;
-    private String baseUrl;
-    private String model;
-    private int dimensions;
-    private Map<String, double[]> cache = new ConcurrentHashMap<>();
+    private final String apiKey;
+    private final String baseUrl;
+    private final String model;
+    private final int dimensions;
+    private final Map<String, double[]> cache = new ConcurrentHashMap<>();
 
     public DashScopeEmbedding(String apiKey) {
         this.apiKey = apiKey;
@@ -35,35 +34,31 @@ public class DashScopeEmbedding {
         }
 
         try {
-            OpenAIClient client = OpenAIOkHttpClient.builder()
-                    .apiKey(apiKey)
-                    .baseUrl(baseUrl)
-                    .build();
+            JsonObject body = new JsonObject();
+            body.addProperty("model", model);
+            body.addProperty("input", processedText);
+            body.addProperty("dimensions", dimensions);
+            body.addProperty("encoding_format", "float");
 
-            EmbeddingCreateParams params = EmbeddingCreateParams.builder()
-                    .model(model)
-                    .input(EmbeddingCreateParams.Input.ofString(processedText))
-                    .dimensions(dimensions)
-                    .build();
+            JsonObject resp = HttpJsonClient.postJson(
+                    baseUrl + "/embeddings", apiKey, body);
 
-            CreateEmbeddingResponse response = client.embeddings().create(params);
-
-            if (response != null && response.data() != null && !response.data().isEmpty()) {
-                List<Float> embeddingList = response.data().get(0).embedding();
-
-                double[] embedding = new double[embeddingList.size()];
-                for (int i = 0; i < embeddingList.size(); i++) {
-                    embedding[i] = embeddingList.get(i);
+            if (resp != null && resp.has("data")) {
+                JsonArray data = resp.getAsJsonArray("data");
+                if (data.size() > 0) {
+                    JsonArray embeddingArr = data.get(0).getAsJsonObject()
+                            .getAsJsonArray("embedding");
+                    double[] embedding = new double[embeddingArr.size()];
+                    for (int i = 0; i < embeddingArr.size(); i++) {
+                        embedding[i] = embeddingArr.get(i).getAsDouble();
+                    }
+                    embedding = normalize(embedding);
+                    cache.put(text, embedding);
+                    return embedding;
                 }
-
-                embedding = normalize(embedding);
-                cache.put(text, embedding);
-
-                return embedding;
             }
-
         } catch (Exception e) {
-            System.err.println("生成嵌入失败: " + e.getMessage());
+            System.err.println("Embedding generation failed: " + e.getMessage());
             e.printStackTrace();
         }
 
@@ -72,7 +67,7 @@ public class DashScopeEmbedding {
 
     public double cosineSimilarity(double[] vec1, double[] vec2) {
         if (vec1.length != vec2.length) {
-            throw new IllegalArgumentException("向量维度不同");
+            throw new IllegalArgumentException("Vector dimension mismatch");
         }
 
         double dot = 0.0;

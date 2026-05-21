@@ -5,6 +5,7 @@ import com.exai.config.Config;
 import com.exai.entity.Answer;
 import com.exai.entity.PlayerQuestion;
 import com.exai.gui.GUIManager;
+import com.exai.i18n.Lang;
 import com.exai.utils.CDUtils;
 import com.exai.utils.DataUtils;
 import org.bukkit.Bukkit;
@@ -26,15 +27,15 @@ public class ChatInputListener implements Listener {
 
             PlayerQuestion pQuestion = new PlayerQuestion(message);
             String playerName = player.getName();
-            player.sendMessage("§a§l@" + playerName + " §f问题: " + message);
+            player.sendMessage(Lang.get("chat.player-prefix", playerName, message));
 
             Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> {
                 Answer answer = Config.generator.generateAnswer(pQuestion, false);
                 String documents = String.join(", ", answer.getSources());
                 String answerText = answer.getAnswer();
                 Bukkit.getScheduler().runTask(ExAI.getInstance(), () -> {
-                    player.sendMessage("§c【" + Config.assistantName + "】§f" + answerText);
-                    DataUtils.insertLog(playerName, message, answerText, documents, "箱子对话");
+                    player.sendMessage(Lang.get("chat.response", Config.assistantName, answerText));
+                    DataUtils.insertLog(playerName, message, answerText, documents, Lang.get("log.source-private"));
                     CDUtils.startDialogueCD(player);
                     GUIManager.exitDialogueMode(player);
                 });

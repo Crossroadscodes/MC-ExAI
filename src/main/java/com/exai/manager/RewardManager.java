@@ -2,6 +2,7 @@ package com.exai.manager;
 
 import com.exai.ExAI;
 import com.exai.config.Config;
+import com.exai.i18n.Lang;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -27,7 +28,7 @@ public class RewardManager {
             if (vaultEnabled) {
                 double amount = Config.config.getDouble("knowledgeReview.rewards.vault.amount", 100);
                 economy.depositPlayer(player, amount);
-                player.sendMessage("§a[" + Config.assistantName + "] 获得 §e" + amount + " §a" + Config.currencyName + "奖励！");
+                player.sendMessage(Lang.get("reward.vault", Config.assistantName, amount, Config.currencyName));
             }
         }
 
@@ -42,7 +43,7 @@ public class RewardManager {
                 if (material != null) {
                     ItemStack itemStack = new ItemStack(material, amount);
                     player.getInventory().addItem(itemStack);
-                    player.sendMessage("§a[" + Config.assistantName + "] 获得 §e" + amount + "个 " + materialName + " §a奖励！");
+                    player.sendMessage(Lang.get("reward.item", Config.assistantName, amount, materialName));
                 }
             }
         }

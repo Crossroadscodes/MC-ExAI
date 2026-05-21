@@ -4,6 +4,8 @@ import com.exai.ExAI;
 import com.exai.config.Config;
 import com.exai.data.DataContainer;
 import com.exai.entity.KnowledgeEntry;
+import com.exai.entity.LogEntry;
+import com.exai.i18n.Lang;
 import org.bukkit.Bukkit;
 
 import java.sql.Connection;
@@ -11,6 +13,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 
 public class DataUtils {
 
@@ -29,7 +33,7 @@ public class DataUtils {
                     ")";
 
             statement.executeUpdate(createTableSQL);
-            System.out.println("玩家问答表创建成功！");
+            System.out.println(Lang.get("log.log-table-ok"));
 
             String createPendingTableSQL = "CREATE TABLE IF NOT EXISTS ex_pending_knowledge_count (" +
                     "player_uuid VARCHAR(36) PRIMARY KEY, " +
@@ -38,7 +42,7 @@ public class DataUtils {
                     "update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP" +
                     ")";
             statement.executeUpdate(createPendingTableSQL);
-            System.out.println("待审核知识计数表创建成功！");
+            System.out.println(Lang.get("log.pending-count-table-ok"));
 
             String createPendingKnowledgeSQL = "CREATE TABLE IF NOT EXISTS ex_pending_knowledge (" +
                     "id INT AUTO_INCREMENT PRIMARY KEY, " +
@@ -49,10 +53,10 @@ public class DataUtils {
                     "create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                     ")";
             statement.executeUpdate(createPendingKnowledgeSQL);
-            System.out.println("待审核知识表创建成功！");
+            System.out.println(Lang.get("log.pending-knowledge-table-ok"));
 
         } catch (SQLException e) {
-            System.err.println("创建表时发生错误: " + e.getMessage());
+            System.err.println("Failed to create table: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -68,7 +72,7 @@ public class DataUtils {
                     "update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP" +
                     ")";
             statement.executeUpdate(createPendingTableSQL);
-            System.out.println("待审核知识计数表创建成功！");
+            System.out.println(Lang.get("log.pending-count-table-ok"));
 
             String createPendingKnowledgeSQL = "CREATE TABLE IF NOT EXISTS ex_pending_knowledge (" +
                     "id INT AUTO_INCREMENT PRIMARY KEY, " +
@@ -79,9 +83,9 @@ public class DataUtils {
                     "create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                     ")";
             statement.executeUpdate(createPendingKnowledgeSQL);
-            System.out.println("待审核知识表创建成功！");
+            System.out.println(Lang.get("log.pending-knowledge-table-ok"));
         } catch (SQLException e) {
-            System.err.println("创建待审核知识表时发生错误: " + e.getMessage());
+            System.err.println("Failed to create pending knowledge table: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -96,7 +100,7 @@ public class DataUtils {
                 return rs.getInt("pending_count");
             }
         } catch (SQLException e) {
-            System.err.println("获取待审核计数失败: " + e.getMessage());
+            System.err.println("Failed to fetch pending count: " + e.getMessage());
             e.printStackTrace();
         }
         return 0;
@@ -112,7 +116,7 @@ public class DataUtils {
             pstmt.setString(3, playerName);
             pstmt.executeUpdate();
         } catch (SQLException e) {
-            System.err.println("增加待审核计数失败: " + e.getMessage());
+            System.err.println("Failed to increase pending count: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -130,7 +134,7 @@ public class DataUtils {
             pstmt.setString(1, uuid);
             pstmt.executeUpdate();
         } catch (SQLException e) {
-            System.err.println("减少待审核计数失败: " + e.getMessage());
+            System.err.println("Failed to decrease pending count: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -155,7 +159,7 @@ public class DataUtils {
                 return rs.getInt(1);
             }
         } catch (SQLException e) {
-            System.err.println("插入待审核知识失败: " + e.getMessage());
+            System.err.println("Failed to insert pending knowledge: " + e.getMessage());
             e.printStackTrace();
         }
         return -1;
@@ -168,7 +172,7 @@ public class DataUtils {
             pstmt.setInt(1, id);
             pstmt.executeUpdate();
         } catch (SQLException e) {
-            System.err.println("删除待审核知识失败: " + e.getMessage());
+            System.err.println("Failed to delete pending knowledge: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -194,9 +198,9 @@ public class DataUtils {
                 KnowledgeEntry entry = new KnowledgeEntry(question, answer, submitter, timestamp);
                 com.exai.data.KnowledgeQueue.addWithId(entry, id);
             }
-            System.out.println("已从数据库加载 " + com.exai.data.KnowledgeQueue.getTotalCount() + " 条待审核知识");
+            System.out.println(Lang.get("log.loaded-pending", com.exai.data.KnowledgeQueue.getTotalCount()));
         } catch (SQLException e) {
-            System.err.println("加载待审核知识失败: " + e.getMessage());
+            System.err.println("Failed to load pending knowledge: " + e.getMessage());
             e.printStackTrace();
         }
 
@@ -215,9 +219,9 @@ public class DataUtils {
                 DataContainer.playerPendingKnowledgeCount.put(playerUuid, pendingCount);
                 DataContainer.submitterToUuid.put(playerName, playerUuid);
             }
-            System.out.println("已重建玩家待审核计数状态");
+            System.out.println(Lang.get("log.rebuilt-state"));
         } catch (SQLException e) {
-            System.err.println("重建玩家待审核计数状态失败: " + e.getMessage());
+            System.err.println("Failed to rebuild player pending count state: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -238,7 +242,7 @@ public class DataUtils {
                 return rs.getInt(1) > 0;
             }
         } catch (SQLException e) {
-            System.err.println("检查待审核知识重复失败: " + e.getMessage());
+            System.err.println("Failed to check pending knowledge duplicate: " + e.getMessage());
             e.printStackTrace();
         }
         return false;
@@ -262,7 +266,7 @@ public class DataUtils {
             pstmt.executeUpdate();
 
         } catch (SQLException e) {
-            System.err.println("插入AI日志失败: " + e.getMessage());
+            System.err.println("Failed to insert AI log: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -271,6 +275,68 @@ public class DataUtils {
                               String documentId, String source) {
         Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> {
             insertLog(playerName, playerInput, aiResponse, documentId, source);
+        });
+    }
+
+    public static int getLogTotalCount() {
+        String querySQL = "SELECT COUNT(*) FROM ex_ai_log";
+        try (Connection connection = DataContainer.sql.getConnection();
+             PreparedStatement pstmt = connection.prepareStatement(querySQL);
+             ResultSet rs = pstmt.executeQuery()) {
+            if (rs.next()) {
+                return rs.getInt(1);
+            }
+        } catch (SQLException e) {
+            System.err.println("Failed to count AI log: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return 0;
+    }
+
+    public static List<LogEntry> getLogPage(int page, int pageSize) {
+        List<LogEntry> list = new ArrayList<>();
+        String querySQL = "SELECT id, player_name, player_input, ai_response, document_id, source, create_time " +
+                "FROM ex_ai_log ORDER BY id DESC LIMIT ? OFFSET ?";
+        try (Connection connection = DataContainer.sql.getConnection();
+             PreparedStatement pstmt = connection.prepareStatement(querySQL)) {
+            pstmt.setInt(1, pageSize);
+            pstmt.setInt(2, page * pageSize);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    LogEntry entry = new LogEntry(
+                            rs.getInt("id"),
+                            rs.getString("player_name"),
+                            rs.getString("player_input"),
+                            rs.getString("ai_response"),
+                            rs.getString("document_id"),
+                            rs.getString("source"),
+                            rs.getTimestamp("create_time") == null ? "" : rs.getTimestamp("create_time").toString()
+                    );
+                    list.add(entry);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Failed to load AI log page: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return list;
+    }
+
+    public static void deleteLog(int id) {
+        String deleteSQL = "DELETE FROM ex_ai_log WHERE id = ?";
+        try (Connection connection = DataContainer.sql.getConnection();
+             PreparedStatement pstmt = connection.prepareStatement(deleteSQL)) {
+            pstmt.setInt(1, id);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            System.err.println("Failed to delete AI log: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public static void deleteLogAsync(int id) {
+        Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> {
+            deleteLog(id);
         });
     }
 }

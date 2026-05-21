@@ -1,3 +1,6 @@
+# 语言 / Language: zh_CN 或 en_US (also looks up plugins/ExAI/lang/<locale>.yml)
+language: zh_CN
+
 # 存储数据
 storage-data:
   address: 127.0.0.1:3306

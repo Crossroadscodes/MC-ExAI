@@ -4,6 +4,7 @@ import com.exai.ExAI;
 import com.exai.embedding.DashScopeEmbedding;
 import com.exai.embedding.VectorStore;
 import com.exai.entity.GameDocument;
+import com.exai.i18n.Lang;
 import org.bukkit.Bukkit;
 
 import java.util.Comparator;
@@ -22,8 +23,9 @@ public class GameKnowledgeBase {
         this.dataLoader = dataLoader;
         this.minSimilarity = minSimilarity;
     }
+
     public void initializeKnowledgeBase() {
-        Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(),()-> {
+        Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> {
             List<GameDocument> documents = dataLoader.loadGameData();
             documents.forEach(doc -> {
                 double[] embedding = embeddingService.generateEmbedding(doc.getContent());
@@ -60,21 +62,27 @@ public class GameKnowledgeBase {
     }
 
     private String enhanceQueryWithContext(String query, String context) {
-        return String.format("玩家问: %s。当前上下文: %s", query, context);
+        return Lang.get("category.enhanced-query", query, context);
     }
 
     private String predictCategory(String query) {
-        if (query.contains("哪里") || query.contains("位置") || query.contains("去哪")) {
-            return "地点";
-        } else if (query.contains("任务") || query.contains("怎么完成")) {
-            return "任务";
-        } else if (query.contains("怎么获得") || query.contains("装备")) {
-            return "物品";
-        } else if (query.contains("技能") || query.contains("怎么使用")) {
-            return "技能";
-        } else if (query.contains("NPC") || query.contains("谁")) {
-            return "NPC";
+        if (matchesAny(query, Lang.get("category.kw-location"))) return Lang.get("category.location");
+        if (matchesAny(query, Lang.get("category.kw-quest"))) return Lang.get("category.quest");
+        if (matchesAny(query, Lang.get("category.kw-item"))) return Lang.get("category.item");
+        if (matchesAny(query, Lang.get("category.kw-skill"))) return Lang.get("category.skill");
+        if (matchesAny(query, Lang.get("category.kw-npc"))) return Lang.get("category.npc");
+        return Lang.get("category.general");
+    }
+
+    private boolean matchesAny(String text, String csvKeywords) {
+        if (csvKeywords == null || csvKeywords.isEmpty()) return false;
+        String lower = text.toLowerCase();
+        for (String kw : csvKeywords.split(",")) {
+            String trimmed = kw.trim();
+            if (!trimmed.isEmpty() && lower.contains(trimmed.toLowerCase())) {
+                return true;
+            }
         }
-        return "通用";
+        return false;
     }
 }

@@ -2,6 +2,7 @@ package com.exai.managers;
 
 import com.exai.ExAI;
 import com.exai.entity.GameDocument;
+import com.exai.i18n.Lang;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
@@ -37,22 +38,23 @@ public class GameDataLoader {
         File txtFile = new File(plugin.getDataFolder(), "gamehelp.txt");
 
         if (txtFile.exists()) {
-            plugin.getLogger().info("从数据文件夹读取gamehelp.txt...");
+            plugin.getLogger().info(Lang.get("log.read-gamehelp"));
             documents = loadFromFile(txtFile);
         }
 
-        plugin.getLogger().info("成功加载 " + documents.size() + " 个文档");
+        plugin.getLogger().info(Lang.get("log.loaded-docs", documents.size()));
         return documents;
     }
+
     private void saveDefaultResource(JavaPlugin plugin) {
         try {
             plugin.saveResource("gamehelp.txt", false);
-            plugin.getLogger().info("已保存默认gamehelp.txt到数据文件夹");
-
+            plugin.getLogger().info(Lang.get("log.saved-default-gamehelp"));
         } catch (Exception e) {
-            plugin.getLogger().warning("保存资源文件失败: " + e.getMessage());
+            plugin.getLogger().warning("Failed to save resource: " + e.getMessage());
         }
     }
+
     private List<GameDocument> loadFromFile(File file) {
         List<GameDocument> documents = new ArrayList<>();
 
@@ -70,7 +72,7 @@ public class GameDataLoader {
             documents = createChunksFromLines(lines);
 
         } catch (IOException e) {
-            ExAI.getInstance().getLogger().severe("读取文件失败: " + e.getMessage());
+            ExAI.getInstance().getLogger().severe("Failed to read file: " + e.getMessage());
             e.printStackTrace();
         }
 
@@ -106,14 +108,14 @@ public class GameDataLoader {
             GameDocument chunk = new GameDocument(
                     "chunk_" + String.format("%04d", i + 1),
                     chunkText,
-                    "游戏知识",
+                    Lang.get("log.knowledge-category"),
                     metadata
             );
 
             chunks.add(chunk);
 
             if (debugMode) {
-                System.out.println("创建文档块 " + (i + 1) + ": " +
+                System.out.println("Chunk " + (i + 1) + ": " +
                         chunkText.substring(0, Math.min(50, chunkText.length())) + "...");
             }
         }
@@ -125,12 +127,10 @@ public class GameDataLoader {
         StringBuilder sb = new StringBuilder();
         for (String line : lines) {
             if (sb.length() > 0) {
-                sb.append("。 ");
+                sb.append(". ");
             }
             sb.append(line);
         }
         return sb.toString();
     }
-
-
 }

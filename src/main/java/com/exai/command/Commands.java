@@ -5,6 +5,7 @@ import com.exai.config.Config;
 import com.exai.entity.Answer;
 import com.exai.entity.PlayerQuestion;
 import com.exai.gui.ChestGUI;
+import com.exai.i18n.Lang;
 import com.exai.utils.CDUtils;
 import com.exai.utils.DataUtils;
 import org.bukkit.Bukkit;
@@ -34,7 +35,7 @@ public class Commands implements CommandExecutor, TabCompleter {
 
             if (sender instanceof Player) {
                 if ((subCommand.equals("reload") || subCommand.equals("question")) && !sender.isOp()) {
-                    sender.sendMessage("§c【系统提示】 §f你没有权限这么做！");
+                    sender.sendMessage(Lang.get("command.no-permission"));
                     return false;
                 }
             }
@@ -43,7 +44,7 @@ public class Commands implements CommandExecutor, TabCompleter {
                 case "reload":
                     Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> {
                         Config.loadAll();
-                        sender.sendMessage("§c【系统提示】§f" + Config.assistantName + "重载完毕");
+                        sender.sendMessage(Lang.get("command.reload-success", Config.assistantName));
                     });
                     return true;
 
@@ -54,12 +55,12 @@ public class Commands implements CommandExecutor, TabCompleter {
 
                 case "question":
                     if (args.length < 3) {
-                        sender.sendMessage("§c用法: /exai question <玩家> <问题>");
+                        sender.sendMessage(Lang.get("command.question-usage"));
                         return false;
                     }
                     Player target = Bukkit.getServer().getPlayerExact(args[1]);
                     if (target == null) {
-                        sender.sendMessage("§c找不到玩家: " + args[1]);
+                        sender.sendMessage(Lang.get("command.player-not-found", args[1]));
                         return false;
                     }
                     String playerName = target.getName();
@@ -69,8 +70,8 @@ public class Commands implements CommandExecutor, TabCompleter {
                             PlayerQuestion pQuestion = new PlayerQuestion(question);
                             Answer answer = Config.generator.generateAnswer(pQuestion, true);
                             String documents = String.join(", ", answer.getSources());
-                            sender.sendMessage("§c【系统提示】§f" + Config.assistantName + "：" + answer.getAnswer());
-                            DataUtils.insertLogAsync(playerName, question, answer.getAnswer(), documents, "单独聊天");
+                            sender.sendMessage(Lang.get("command.question-prefix", Config.assistantName, answer.getAnswer()));
+                            DataUtils.insertLogAsync(playerName, question, answer.getAnswer(), documents, Lang.get("log.source-command"));
                         });
                     }
                     return true;
@@ -88,16 +89,16 @@ public class Commands implements CommandExecutor, TabCompleter {
     }
 
     private void sendHelp(CommandSender sender) {
-        sender.sendMessage("§6════ §e§lExAI 命令帮助 §6════");
-        sender.sendMessage("§e/exai help §7- 显示此帮助信息");
+        sender.sendMessage(Lang.get("command.help-header"));
+        sender.sendMessage(Lang.get("command.help-help"));
         if (sender.isOp()) {
-            sender.sendMessage("§e/exai reload §7- 重载插件配置");
-            sender.sendMessage("§e/exai opengui §7- 打开ExAI GUI界面");
-            sender.sendMessage("§e/exai question <玩家> <问题> §7- 向指定玩家发送问题");
-} else {
-            sender.sendMessage("§e/exai opengui §7- 打开ExAI GUI界面");
+            sender.sendMessage(Lang.get("command.help-reload"));
+            sender.sendMessage(Lang.get("command.help-opengui"));
+            sender.sendMessage(Lang.get("command.help-question"));
+        } else {
+            sender.sendMessage(Lang.get("command.help-opengui"));
         }
-        sender.sendMessage("§6═══════════════════════");
+        sender.sendMessage(Lang.get("command.help-footer"));
     }
 
     @Override
