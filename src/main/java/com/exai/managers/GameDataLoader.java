@@ -2,7 +2,9 @@ package com.exai.managers;
 
 import com.exai.ExAI;
 import com.exai.entity.GameDocument;
+import com.exai.entity.KnowledgeEntry;
 import com.exai.i18n.Lang;
+import com.exai.manager.KnowledgeFileManager;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
@@ -10,73 +12,81 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public class GameDataLoader {
-    private String docxPath;
-    private int chunkSize;
+    private int chunkSize = 5;
     private boolean debugMode = false;
 
     public GameDataLoader() {
-        this.docxPath = "gamehelp.txt";
-        this.chunkSize = 5;
     }
 
-    public GameDataLoader(String docxPath) {
-        this.docxPath = docxPath;
-        this.chunkSize = 5;
-    }
-
-    public GameDataLoader(String docxPath, int chunkSize) {
-        this.docxPath = docxPath;
+    public GameDataLoader(int chunkSize) {
         this.chunkSize = chunkSize;
     }
 
     public List<GameDocument> loadGameData() {
-        List<GameDocument> documents = new ArrayList<>();
         JavaPlugin plugin = ExAI.getInstance();
 
-        saveDefaultResource(plugin);
+        File ymlFile = new File(plugin.getDataFolder(), KnowledgeFileManager.FILE_NAME);
+        File legacyTxt = new File(plugin.getDataFolder(), "gamehelp.txt");
 
-        File txtFile = new File(plugin.getDataFolder(), "gamehelp.txt");
-
-        if (txtFile.exists()) {
-            plugin.getLogger().info(Lang.get("log.read-gamehelp"));
-            documents = loadFromFile(txtFile);
+        if (!ymlFile.exists() && legacyTxt.exists()) {
+            migrateTxtToYml(legacyTxt);
+        }
+        if (!ymlFile.exists()) {
+            saveDefaultKnowledgeYml(plugin);
         }
 
+        plugin.getLogger().info(Lang.get("log.read-knowledge-yml"));
+        List<GameDocument> documents = loadFromKnowledgeFile();
         plugin.getLogger().info(Lang.get("log.loaded-docs", documents.size()));
         return documents;
     }
 
-    private void saveDefaultResource(JavaPlugin plugin) {
+    private void saveDefaultKnowledgeYml(JavaPlugin plugin) {
         try {
-            plugin.saveResource("gamehelp.txt", false);
-            plugin.getLogger().info(Lang.get("log.saved-default-gamehelp"));
+            plugin.saveResource(KnowledgeFileManager.FILE_NAME, false);
         } catch (Exception e) {
-            plugin.getLogger().warning("Failed to save resource: " + e.getMessage());
+            plugin.getLogger().warning("Failed to save default knowledge.yml: " + e.getMessage());
         }
     }
 
-    private List<GameDocument> loadFromFile(File file) {
-        List<GameDocument> documents = new ArrayList<>();
-
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8))) {
-
-            List<String> lines = new ArrayList<>();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                if (!line.isEmpty()) {
-                    lines.add(line);
+    private void migrateTxtToYml(File txtFile) {
+        try {
+            List<KnowledgeEntry> entries = new ArrayList<>();
+            String qPrefix = Lang.get("book.pattern-prefix-q");
+            String aPrefix = Lang.get("book.pattern-prefix-a");
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(new FileInputStream(txtFile), StandardCharsets.UTF_8))) {
+                String q = null;
+                String line;
+                while ((line = br.readLine()) != null) {
+                    String t = line.trim();
+                    if (t.isEmpty()) continue;
+                    if (t.startsWith(qPrefix)) {
+                        q = t.substring(qPrefix.length()).trim();
+                    } else if (t.startsWith(aPrefix) && q != null) {
+                        String a = t.substring(aPrefix.length()).trim();
+                        entries.add(new KnowledgeEntry(q, a, "", 0L));
+                        q = null;
+                    }
                 }
             }
-            documents = createChunksFromLines(lines);
-
+            KnowledgeFileManager.writeAll(entries);
+            ExAI.getInstance().getLogger().info(Lang.get("log.migrated-gamehelp-yml", entries.size()));
         } catch (IOException e) {
-            ExAI.getInstance().getLogger().severe("Failed to read file: " + e.getMessage());
-            e.printStackTrace();
+            ExAI.getInstance().getLogger().warning("Migrate gamehelp.txt -> knowledge.yml failed: " + e.getMessage());
         }
+    }
 
-        return documents;
+    private List<GameDocument> loadFromKnowledgeFile() {
+        List<KnowledgeEntry> entries = KnowledgeFileManager.readAll();
+        String qPrefix = Lang.get("book.pattern-prefix-q");
+        String aPrefix = Lang.get("book.pattern-prefix-a");
+        List<String> lines = new ArrayList<>(entries.size() * 2);
+        for (KnowledgeEntry e : entries) {
+            lines.add(qPrefix + e.getQuestion());
+            lines.add(aPrefix + e.getAnswer());
+        }
+        return createChunksFromLines(lines);
     }
 
     private List<GameDocument> createChunksFromLines(List<String> lines) {

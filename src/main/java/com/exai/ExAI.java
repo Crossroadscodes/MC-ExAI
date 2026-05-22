@@ -1,6 +1,7 @@
 package com.exai;
 
 import com.exai.config.Config;
+import com.exai.data.DataContainer;
 import com.exai.listener.ChatInputListener;
 import com.exai.listener.GUIListener;
 import com.exai.listener.KnowledgeListener;
@@ -22,5 +23,8 @@ public final class ExAI extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (DataContainer.storage != null) {
+            DataContainer.storage.shutdown();
+        }
     }
 }

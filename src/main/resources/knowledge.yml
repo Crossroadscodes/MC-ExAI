@@ -1,0 +1,6 @@
+# ExAI 知识库 / Knowledge Base
+# 每个条目包含一对 question / answer
+# Each entry has a question / answer pair
+entries:
+  - question: "MC的最终BOSS是什么？"
+    answer: "末影龙。"

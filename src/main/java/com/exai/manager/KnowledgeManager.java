@@ -1,6 +1,5 @@
 package com.exai.manager;
 
-import com.exai.ExAI;
 import com.exai.config.Config;
 import com.exai.data.DataContainer;
 import com.exai.data.KnowledgeQueue;
@@ -9,9 +8,6 @@ import com.exai.i18n.Lang;
 import com.exai.utils.DataUtils;
 import org.bukkit.Bukkit;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -106,13 +102,7 @@ public class KnowledgeManager {
     }
 
     private static void writeToGameHelp(KnowledgeEntry entry) {
-        File gameHelpFile = new File(ExAI.getInstance().getDataFolder(), "gamehelp.txt");
-        try (FileWriter writer = new FileWriter(gameHelpFile, true)) {
-            writer.write(Lang.get("book.pattern-prefix-q") + entry.getQuestion() + "\n");
-            writer.write(Lang.get("book.pattern-prefix-a") + entry.getAnswer() + "\n");
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        KnowledgeFileManager.append(entry);
     }
 
     public static String formatKnowledgeForDisplay(KnowledgeEntry entry) {
