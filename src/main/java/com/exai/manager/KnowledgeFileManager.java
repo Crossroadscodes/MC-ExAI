@@ -3,68 +3,62 @@ package com.exai.manager;
 import com.exai.ExAI;
 import com.exai.config.Config;
 import com.exai.entity.KnowledgeEntry;
-import com.exai.i18n.Lang;
 import org.bukkit.Bukkit;
+import org.bukkit.configuration.file.YamlConfiguration;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class KnowledgeFileManager {
-    private static final String FILE_NAME = "gamehelp.txt";
+    public static final String FILE_NAME = "knowledge.yml";
+
+    public static File knowledgeFile() {
+        return new File(ExAI.getInstance().getDataFolder(), FILE_NAME);
+    }
 
     public static List<KnowledgeEntry> readAll() {
         List<KnowledgeEntry> list = new ArrayList<>();
-        File file = new File(ExAI.getInstance().getDataFolder(), FILE_NAME);
+        File file = knowledgeFile();
         if (!file.exists()) {
             return list;
         }
-        String qPrefix = Lang.get("book.pattern-prefix-q");
-        String aPrefix = Lang.get("book.pattern-prefix-a");
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8))) {
-            String q = null;
-            String line;
-            while ((line = br.readLine()) != null) {
-                String trimmed = line.trim();
-                if (trimmed.isEmpty()) continue;
-                if (trimmed.startsWith(qPrefix)) {
-                    q = trimmed.substring(qPrefix.length()).trim();
-                } else if (trimmed.startsWith(aPrefix) && q != null) {
-                    String a = trimmed.substring(aPrefix.length()).trim();
-                    list.add(new KnowledgeEntry(q, a, "", 0L));
-                    q = null;
-                }
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
+        YamlConfiguration conf = YamlConfiguration.loadConfiguration(file);
+        List<Map<?, ?>> raw = conf.getMapList("entries");
+        for (Map<?, ?> m : raw) {
+            Object q = m.get("question");
+            Object a = m.get("answer");
+            if (q == null || a == null) continue;
+            list.add(new KnowledgeEntry(q.toString(), a.toString(), "", 0L));
         }
         return list;
     }
 
     public static void writeAll(List<KnowledgeEntry> entries) {
-        File file = new File(ExAI.getInstance().getDataFolder(), FILE_NAME);
-        String qPrefix = Lang.get("book.pattern-prefix-q");
-        String aPrefix = Lang.get("book.pattern-prefix-a");
-        try (BufferedWriter bw = new BufferedWriter(
-                new OutputStreamWriter(new FileOutputStream(file, false), StandardCharsets.UTF_8))) {
-            for (KnowledgeEntry e : entries) {
-                bw.write(qPrefix + e.getQuestion());
-                bw.newLine();
-                bw.write(aPrefix + e.getAnswer());
-                bw.newLine();
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
+        File file = knowledgeFile();
+        YamlConfiguration conf = new YamlConfiguration();
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (KnowledgeEntry e : entries) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("question", e.getQuestion());
+            m.put("answer", e.getAnswer());
+            list.add(m);
         }
+        conf.set("entries", list);
+        try {
+            conf.save(file);
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    public static void append(KnowledgeEntry entry) {
+        List<KnowledgeEntry> all = readAll();
+        all.add(entry);
+        writeAll(all);
     }
 
     public static void deleteByIndex(int index) {
@@ -79,21 +73,6 @@ public class KnowledgeFileManager {
         if (index < 0 || index >= all.size()) return;
         all.set(index, entry);
         writeAll(all);
-    }
-
-    public static void append(KnowledgeEntry entry) {
-        File file = new File(ExAI.getInstance().getDataFolder(), FILE_NAME);
-        String qPrefix = Lang.get("book.pattern-prefix-q");
-        String aPrefix = Lang.get("book.pattern-prefix-a");
-        try (BufferedWriter bw = new BufferedWriter(
-                new OutputStreamWriter(new FileOutputStream(file, true), StandardCharsets.UTF_8))) {
-            bw.write(qPrefix + entry.getQuestion());
-            bw.newLine();
-            bw.write(aPrefix + entry.getAnswer());
-            bw.newLine();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
     }
 
     public static boolean isDuplicateQuestion(String question) {

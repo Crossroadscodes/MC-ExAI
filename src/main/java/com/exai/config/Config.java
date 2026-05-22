@@ -9,10 +9,10 @@ import com.exai.i18n.Lang;
 import com.exai.listener.PlayerListener;
 import com.exai.managers.GameDataLoader;
 import com.exai.managers.GameKnowledgeBase;
-import com.exai.mysql.MySQL;
 import com.exai.service.LLMService;
 import com.exai.command.Commands;
-import com.exai.utils.DataUtils;
+import com.exai.storage.MysqlStorage;
+import com.exai.storage.YamlStorage;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -23,6 +23,7 @@ public class Config {
     public static FileConfiguration config;
     public static GameKnowledgeBase knowledgeBase;
     public static AnswerGenerator generator;
+    public static String storageType;
     public static String address;
     public static String database;
     public static String username;
@@ -45,13 +46,27 @@ public class Config {
             config = ExAI.getInstance().getConfig();
             language = config.getString("language", "zh_CN");
             Lang.load(language);
+
+            storageType = config.getString("storage.type", "mysql").toLowerCase();
             address = config.getString("storage-data.address");
             database = config.getString("storage-data.database");
             username = config.getString("storage-data.username");
             password = config.getString("storage-data.password");
-            DataContainer.sql = new MySQL(address, database, username, password);
-            DataUtils.createTable();
-            DataUtils.loadAllPendingKnowledge();
+
+            if (DataContainer.storage != null) {
+                DataContainer.storage.shutdown();
+                DataContainer.storage = null;
+                DataContainer.sql = null;
+            }
+
+            if ("yml".equals(storageType)) {
+                DataContainer.storage = new YamlStorage();
+                ExAI.getInstance().getLogger().info(Lang.get("log.storage-mode-yml"));
+            } else {
+                DataContainer.storage = new MysqlStorage();
+                ExAI.getInstance().getLogger().info(Lang.get("log.storage-mode-mysql"));
+            }
+            DataContainer.storage.initialize();
 
             ExAI.getInstance().getCommand("exai").setExecutor(new Commands());
             ExAI.getInstance().getCommand("exai").setTabCompleter(new Commands());

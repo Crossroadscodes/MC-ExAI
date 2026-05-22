@@ -1,7 +1,13 @@
 # 语言 / Language: zh_CN 或 en_US (also looks up plugins/ExAI/lang/<locale>.yml)
 language: zh_CN
 
-# 存储数据
+# 存储模式 / Storage mode
+# mysql: 使用 MySQL 数据库 (需配置 storage-data)
+# yml:   使用本地 YAML 文件 (数据保存在 plugins/ExAI/data/ 与 knowledge.yml)
+storage:
+  type: yml
+
+# 存储数据 (仅 storage.type=mysql 时使用)
 storage-data:
   address: 127.0.0.1:3306
   database: xx
