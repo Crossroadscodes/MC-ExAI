@@ -112,5 +112,6 @@ buildNumber.properties
 # Common working directory
 run/
 png/
+.claude/
 
 /FORUM.md
