@@ -40,21 +40,19 @@ public class AnswerGenerator {
         StringBuilder prompt = new StringBuilder();
         prompt.append(Lang.get("prompt.base-role", Config.assistantName));
 
-        if (docs != null && !docs.isEmpty()) {
-            prompt.append(Lang.get("prompt.strict-with-docs"));
-            for (int i = 0; i < docs.size(); i++) {
-                GameDocument doc = docs.get(i);
-                prompt.append(i + 1).append(". ").append(doc.getContent()).append("\n");
-            }
+        // 无可用文档：明确指示拒答而非凭自身知识编造
+        if (docs == null || docs.isEmpty()) {
+            prompt.append(Lang.get("prompt.no-docs-refuse")).append(question.getQuestion());
+            return prompt.toString();
         }
 
+        prompt.append(Lang.get("prompt.strict-with-docs"));
+        appendDocs(prompt, docs);
+        prompt.append(Lang.get("prompt.docs-end"));
         prompt.append(Lang.get("prompt.player-asks")).append(question.getQuestion());
-
-        if (question.getContext() != null && !question.getContext().isEmpty()) {
-            prompt.append(Lang.get("prompt.context", question.getContext()));
-        }
-
-        prompt.append(Lang.get("prompt.answer-in-lang"));
+        appendContext(prompt, question);
+        // 最强约束放在最末尾（近因效应），强制「无依据则拒答」
+        prompt.append(Lang.get("prompt.grounding-reminder"));
         return prompt.toString();
     }
 
@@ -68,20 +66,27 @@ public class AnswerGenerator {
         }
 
         prompt.append(Lang.get("prompt.broadcast-role", Config.assistantName));
-        prompt.append(Lang.get("prompt.loose-with-docs"));
-        for (int i = 0; i < docs.size(); i++) {
-            GameDocument doc = docs.get(i);
-            prompt.append(i + 1).append(". ").append(doc.getContent()).append("\n");
-        }
-
+        prompt.append(Lang.get("prompt.strict-with-docs"));
+        appendDocs(prompt, docs);
+        prompt.append(Lang.get("prompt.docs-end"));
         prompt.append(Lang.get("prompt.player-asks")).append(question.getQuestion());
+        appendContext(prompt, question);
+        prompt.append(Lang.get("prompt.grounding-reminder"));
+        return prompt.toString();
+    }
 
+    /** 把检索到的文档以「序号. 内容」逐条附加。 */
+    private void appendDocs(StringBuilder prompt, List<GameDocument> docs) {
+        for (int i = 0; i < docs.size(); i++) {
+            prompt.append(i + 1).append(". ").append(docs.get(i).getContent()).append("\n");
+        }
+    }
+
+    /** 玩家有当前状态上下文时附加。 */
+    private void appendContext(StringBuilder prompt, PlayerQuestion question) {
         if (question.getContext() != null && !question.getContext().isEmpty()) {
             prompt.append(Lang.get("prompt.context", question.getContext()));
         }
-
-        prompt.append(Lang.get("prompt.answer-in-lang"));
-        return prompt.toString();
     }
 
     public static String formatWithLineBreak(String input) {
@@ -106,6 +111,8 @@ public class AnswerGenerator {
 
     private Answer parseResponse(String response, List<GameDocument> sources, Boolean isFormatWithLineBreak) {
         Answer answer = new Answer();
+        // 在换行格式化之前判定，避免插入的换行把拒答标记切断
+        answer.setUnknown(isNoAnswer(response));
         if (isFormatWithLineBreak) {
             response = formatWithLineBreak(response);
         }
@@ -128,6 +135,21 @@ public class AnswerGenerator {
 
         answer.setSuggestedAction(getAction(response));
         return answer;
+    }
+
+    /** 命中任一拒答标记（如「找不到相关信息」）即视为 AI 无法作答。response 为空也视为无法作答。 */
+    private boolean isNoAnswer(String response) {
+        if (response == null || response.trim().isEmpty()) {
+            return true;
+        }
+        String lower = response.toLowerCase();
+        for (String marker : Lang.get("prompt.no-answer-marker").split(",")) {
+            String m = marker.trim().toLowerCase();
+            if (!m.isEmpty() && lower.contains(m)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String getAction(String response) {

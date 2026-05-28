@@ -16,12 +16,14 @@ public class GameKnowledgeBase {
     private DashScopeEmbedding embeddingService;
     private GameDataLoader dataLoader;
     private double minSimilarity;
+    private int maxDocs;
 
-    public GameKnowledgeBase(VectorStore vectorStore, DashScopeEmbedding embeddingService, GameDataLoader dataLoader, double minSimilarity) {
+    public GameKnowledgeBase(VectorStore vectorStore, DashScopeEmbedding embeddingService, GameDataLoader dataLoader, double minSimilarity, int maxDocs) {
         this.vectorStore = vectorStore;
         this.embeddingService = embeddingService;
         this.dataLoader = dataLoader;
         this.minSimilarity = minSimilarity;
+        this.maxDocs = maxDocs;
     }
 
     public void initializeKnowledgeBase() {
@@ -51,13 +53,10 @@ public class GameKnowledgeBase {
 
         return results.stream()
                 .distinct()
+                .filter(doc -> embeddingService.cosineSimilarity(queryEmbedding, doc.getEmbedding()) >= minSimilarity)
                 .sorted(Comparator.comparingDouble(doc ->
                         -embeddingService.cosineSimilarity(queryEmbedding, doc.getEmbedding())))
-                .limit(7)
-                .filter(doc -> {
-                    double similarity = embeddingService.cosineSimilarity(queryEmbedding, doc.getEmbedding());
-                    return similarity >= minSimilarity;
-                })
+                .limit(maxDocs)
                 .collect(Collectors.toList());
     }
 

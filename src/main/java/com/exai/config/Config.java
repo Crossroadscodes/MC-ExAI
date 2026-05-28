@@ -10,6 +10,7 @@ import com.exai.listener.PlayerListener;
 import com.exai.managers.GameDataLoader;
 import com.exai.managers.GameKnowledgeBase;
 import com.exai.service.LLMService;
+import com.exai.service.KnowledgeReviewService;
 import com.exai.command.Commands;
 import com.exai.storage.MysqlStorage;
 import com.exai.storage.YamlStorage;
@@ -30,7 +31,9 @@ public class Config {
     public static String password;
     public static String llmBaseUrl;
     public static String llmModel;
+    public static double llmTemperature;
     public static double minSimilarity;
+    public static int maxDocs;
     public static String assistantName;
     public static int maxPendingKnowledgePerPlayer;
     public static String currencyName;
@@ -39,6 +42,16 @@ public class Config {
     public static int chatResponseCD;
     public static String chatResponseSuffix;
     public static String language;
+    // 公屏问答自动采集
+    public static KnowledgeReviewService reviewer;
+    public static boolean autoCollectEnabled;
+    public static int autoCollectAnswerWindow;
+    public static int autoCollectThanksWindow;
+    public static int autoCollectMinAnswerLength;
+    public static String autoCollectThanksKeywords;
+    public static boolean autoCollectNotifyReviewers;
+    // 玩家书本提交的 AI 初审
+    public static boolean playerSubmitReviewEnabled;
 
     public static void loadAll() {
         try {
@@ -73,21 +86,32 @@ public class Config {
             String apiKey = config.getString("llm.apiKey");
             llmBaseUrl = config.getString("llm.baseUrl");
             llmModel = config.getString("llm.model");
+            llmTemperature = config.getDouble("llm.temperature", 0.3);
             chatKeywords = config.getString("llm.chatKeywords", "吗,呢,什么,怎么,如何,为什么,？,?");
             chatResponseCD = config.getInt("llm.chatResponseCD", 60);
             chatResponseEnabled = config.getBoolean("llm.chatResponseEnabled", true);
             chatResponseSuffix = config.getString("llm.chatResponseSuffix", "");
             minSimilarity = config.getDouble("knowledge.minSimilarity", 0.35);
+            maxDocs = config.getInt("knowledge.maxDocs", 3);
             maxPendingKnowledgePerPlayer = config.getInt("knowledge.maxPendingKnowledgePerPlayer", 30);
             currencyName = config.getString("knowledge.knowledgeReview.rewards.vault.currencyName", "Coin");
+            autoCollectEnabled = config.getBoolean("knowledge.autoCollect.enabled", true);
+            autoCollectAnswerWindow = config.getInt("knowledge.autoCollect.answerWindowSeconds", 60);
+            autoCollectThanksWindow = config.getInt("knowledge.autoCollect.thanksWindowSeconds", 20);
+            autoCollectMinAnswerLength = config.getInt("knowledge.autoCollect.minAnswerLength", 4);
+            autoCollectThanksKeywords = config.getString("knowledge.autoCollect.thanksKeywords",
+                    "谢谢,感谢,thx,thanks,3q,谢了,多谢,懂了,明白了,学到了,解决了,有用");
+            autoCollectNotifyReviewers = config.getBoolean("knowledge.autoCollect.notifyReviewers", true);
+            playerSubmitReviewEnabled = config.getBoolean("knowledge.playerSubmitReview.enabled", true);
             assistantName = config.getString("assistant.name", "ExAI");
             DashScopeEmbedding embeddingService = new DashScopeEmbedding(apiKey);
             VectorStore vectorStore = new VectorStore(embeddingService);
             GameDataLoader dataLoader = new GameDataLoader();
-            knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity);
+            knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
             knowledgeBase.initializeKnowledgeBase();
-            LLMService llm = new LLMService(apiKey, llmBaseUrl, llmModel);
+            LLMService llm = new LLMService(apiKey, llmBaseUrl, llmModel, llmTemperature);
             generator = new AnswerGenerator(llm);
+            reviewer = new KnowledgeReviewService(llm);
             PlayerListener.registerIfNeeded(ExAI.getInstance());
             ExAI.getInstance().getLogger().info(Lang.get("log.enable-success"));
         } catch (Exception e) {
@@ -107,7 +131,7 @@ public class Config {
             DashScopeEmbedding embeddingService = new DashScopeEmbedding(apiKey);
             VectorStore vectorStore = new VectorStore(embeddingService);
             GameDataLoader dataLoader = new GameDataLoader();
-            knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity);
+            knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
             knowledgeBase.initializeKnowledgeBase();
         } catch (Exception e) {
             e.printStackTrace();

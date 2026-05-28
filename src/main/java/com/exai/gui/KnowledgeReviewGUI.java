@@ -84,7 +84,16 @@ public class KnowledgeReviewGUI {
         String a = entry.getAnswer();
         if (q.length() > 20) q = q.substring(0, 20) + "...";
         if (a.length() > 20) a = a.substring(0, 20) + "...";
-        lore.add(Lang.get("gui.knowledge-submitter", entry.getSubmitter()));
+        if ("auto".equals(entry.getSource())) {
+            lore.add(Lang.get("gui.knowledge-source-auto"));
+            lore.add(Lang.get("gui.knowledge-answerer", entry.getSubmitter()));
+            if (entry.isThanked()) {
+                lore.add(Lang.get("gui.knowledge-thanked"));
+            }
+        } else {
+            lore.add(Lang.get("gui.knowledge-source-player"));
+            lore.add(Lang.get("gui.knowledge-submitter", entry.getSubmitter()));
+        }
         lore.add("");
         lore.add(Lang.get("gui.knowledge-question", q));
         lore.add(Lang.get("gui.knowledge-answer", a));

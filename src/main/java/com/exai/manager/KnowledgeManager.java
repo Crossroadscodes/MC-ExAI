@@ -68,6 +68,35 @@ public class KnowledgeManager {
         return true;
     }
 
+    /**
+     * 提交一条公屏自动采集并通过 AI 初审的问答到待审核队列。
+     * 与玩家手动提交不同：不计入玩家每日上传上限，带「自动采集」来源标记与致谢标识。
+     *
+     * @return 是否成功入队（重复问题或写入失败时返回 false）
+     */
+    public static boolean submitAutoCollected(String question, String answer, String answererName, boolean thanked) {
+        if (question == null || answer == null) {
+            return false;
+        }
+        if (KnowledgeQueue.isDuplicate(question)
+                || DataUtils.isPendingKnowledgeDuplicate(question)
+                || KnowledgeFileManager.isDuplicateQuestion(question)) {
+            return false;
+        }
+
+        KnowledgeEntry entry = new KnowledgeEntry(question, answer,
+                answererName == null ? "" : answererName, System.currentTimeMillis());
+        entry.setSource("auto");
+        entry.setThanked(thanked);
+
+        int dbId = DataUtils.insertPendingKnowledge(entry);
+        if (dbId == -1) {
+            return false;
+        }
+        KnowledgeQueue.addWithId(entry, dbId);
+        return true;
+    }
+
     public static void approveKnowledge(int page, int index, int pageSize) {
         KnowledgeEntry entry = KnowledgeQueue.getPage(page, pageSize).get(index);
         if (entry != null) {
