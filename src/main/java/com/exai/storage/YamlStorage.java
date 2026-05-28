@@ -123,6 +123,8 @@ public class YamlStorage implements DataStorage {
             pendingConf.set(base + ".answer", entry.getAnswer());
             pendingConf.set(base + ".submitter", entry.getSubmitter());
             pendingConf.set(base + ".timestamp", entry.getTimestamp());
+            pendingConf.set(base + ".source", entry.getSource());
+            pendingConf.set(base + ".thanked", entry.isThanked());
             pendingConf.set("next-id", id + 1);
             saveQuietly(pendingConf, pendingFile);
             return id;
@@ -158,6 +160,8 @@ public class YamlStorage implements DataStorage {
                     String submitter = pendingConf.getString(base + ".submitter", "");
                     long timestamp = pendingConf.getLong(base + ".timestamp", 0L);
                     KnowledgeEntry entry = new KnowledgeEntry(question, answer, submitter, timestamp);
+                    entry.setSource(pendingConf.getString(base + ".source", "player"));
+                    entry.setThanked(pendingConf.getBoolean(base + ".thanked", false));
                     KnowledgeQueue.addWithId(entry, id);
                 }
             }

@@ -9,6 +9,7 @@ import com.exai.i18n.Lang;
 import com.exai.mysql.MySQL;
 
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -75,13 +76,34 @@ public class MysqlStorage implements DataStorage {
                     "answer TEXT NOT NULL, " +
                     "submitter VARCHAR(32) NOT NULL, " +
                     "timestamp BIGINT NOT NULL, " +
+                    "source VARCHAR(32) DEFAULT 'player', " +
+                    "thanked TINYINT(1) DEFAULT 0, " +
                     "create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                     ")");
+            // 兼容旧版本：为已存在的表补充新列
+            addColumnIfMissing(connection, "ex_pending_knowledge", "source", "VARCHAR(32) DEFAULT 'player'");
+            addColumnIfMissing(connection, "ex_pending_knowledge", "thanked", "TINYINT(1) DEFAULT 0");
             System.out.println(Lang.get("log.pending-knowledge-table-ok"));
 
         } catch (SQLException e) {
             System.err.println("Failed to create table: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    private void addColumnIfMissing(Connection connection, String table, String column, String definition) {
+        try {
+            DatabaseMetaData meta = connection.getMetaData();
+            try (ResultSet rs = meta.getColumns(connection.getCatalog(), null, table, column)) {
+                if (rs.next()) {
+                    return;
+                }
+            }
+            try (Statement st = connection.createStatement()) {
+                st.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+            }
+        } catch (SQLException e) {
+            System.err.println("Failed to add column " + column + " to " + table + ": " + e.getMessage());
         }
     }
 
@@ -133,13 +155,15 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public int insertPendingKnowledge(KnowledgeEntry entry) {
-        String insertSQL = "INSERT INTO ex_pending_knowledge (question, answer, submitter, timestamp) VALUES (?, ?, ?, ?)";
+        String insertSQL = "INSERT INTO ex_pending_knowledge (question, answer, submitter, timestamp, source, thanked) VALUES (?, ?, ?, ?, ?, ?)";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(insertSQL, Statement.RETURN_GENERATED_KEYS)) {
             pstmt.setString(1, entry.getQuestion());
             pstmt.setString(2, entry.getAnswer());
             pstmt.setString(3, entry.getSubmitter());
             pstmt.setLong(4, entry.getTimestamp());
+            pstmt.setString(5, entry.getSource());
+            pstmt.setBoolean(6, entry.isThanked());
             pstmt.executeUpdate();
             ResultSet rs = pstmt.getGeneratedKeys();
             if (rs.next()) {
@@ -168,7 +192,7 @@ public class MysqlStorage implements DataStorage {
     @Override
     public void loadAllPendingKnowledge() {
         KnowledgeQueue.clearAll();
-        String querySQL = "SELECT id, question, answer, submitter, timestamp FROM ex_pending_knowledge";
+        String querySQL = "SELECT id, question, answer, submitter, timestamp, source, thanked FROM ex_pending_knowledge";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL);
              ResultSet rs = pstmt.executeQuery()) {
@@ -179,6 +203,9 @@ public class MysqlStorage implements DataStorage {
                 String submitter = rs.getString("submitter");
                 long timestamp = rs.getLong("timestamp");
                 KnowledgeEntry entry = new KnowledgeEntry(question, answer, submitter, timestamp);
+                String source = rs.getString("source");
+                entry.setSource(source == null ? "player" : source);
+                entry.setThanked(rs.getBoolean("thanked"));
                 KnowledgeQueue.addWithId(entry, id);
             }
             System.out.println(Lang.get("log.loaded-pending", KnowledgeQueue.getTotalCount()));

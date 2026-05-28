@@ -19,6 +19,8 @@ llm:
   baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   model: "qwen-plus"
   apiKey: "填你自己的API"
+  # AI 回答温度 (0~1)：越低越严谨、越不容易产生幻觉，事实问答建议 0.2~0.3
+  temperature: 0.3
   # 公屏聊天相关
   chatKeywords: "吗,呢,么,嘛,咋,啥,谁,哪,哪里,哪儿,哪个,多少,多久,为何,为啥,为什么,如何,怎么,怎么办,怎么做,怎么用,怎么样,怎么回事,怎么搞,是不是,是否,能不能,可不可以,？,?"
   chatResponseCD: 60
@@ -37,7 +39,29 @@ gui:
 # 知识库配置
 knowledge:
   minSimilarity: 0.35
+  # 单次回答最多注入的知识库文档数：越少越不容易拼凑出错误答案，建议 3~5
+  maxDocs: 3
   maxPendingKnowledgePerPlayer: 30
+  # 玩家书本提交的 AI 初审：开启后，玩家通过书本上传的问答会先交给 AI 判断是否适合入库，
+  # 不符合规定(玩笑/广告/答非所问/明显错误/无意义)的不允许上传；通过的仍进入待审核队列等 OP 复核。
+  # AI 服务不可用时拦截提交并提示玩家稍后再试。
+  playerSubmitReview:
+    enabled: true
+  # 公屏问答自动采集：监听公屏「玩家提问→他人回答→(提问者感谢)」，
+  # 由 AI 结合上下文判断该回答是否适合作为一条知识(二元判定，不打分)，过滤搞笑/不正经回复，
+  # 通过的进入待审核队列供管理员复核；被提问者致谢的会带「已致谢」标识。
+  autoCollect:
+    enabled: true
+    # 提问后多少秒内的他人回答视为候选回答
+    answerWindowSeconds: 60
+    # 回答出现后等待提问者感谢的时间窗(秒)，窗口结束仍会照常初审
+    thanksWindowSeconds: 20
+    # 过滤过短回答的最小字符数
+    minAnswerLength: 4
+    # 采集到新条目时，是否提示在线的审核员(拥有 opPermission)
+    notifyReviewers: true
+    # 感谢关键词(英文逗号分隔)，命中即视为提问者致谢
+    thanksKeywords: "谢谢,感谢,thx,thanks,3q,谢了,多谢,懂了,明白了,学到了,解决了,有用"
   knowledgeReview:
     opPermission: "exai.op"
     rewards:
