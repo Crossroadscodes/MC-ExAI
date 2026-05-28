@@ -1,6 +1,6 @@
 # ExAI — AI Assistant Plugin for Minecraft
 
-[![Version](https://img.shields.io/badge/version-1.0.2-blue)](https://github.com/Crossroadscodes/MC-ExAI)
+[![Version](https://img.shields.io/badge/version-1.0.3-blue)](https://github.com/Crossroadscodes/MC-ExAI)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **Languages / 语言**: [简体中文](README.md) · [English](README_EN.md)
@@ -15,6 +15,7 @@ ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports pu
 - Listens to player chat and detects question keywords (`?`, `how`, `what`, `why`, etc.)
 - Generates AI replies asynchronously and broadcasts them to chat
 - Configurable cooldown to prevent spam
+- **Anti-spam**: when the knowledge base has nothing to ground an answer, the AI's "sorry, no relevant info" reply is *not* broadcast — no more noise in chat
 - Optional suffix to guide players to the GUI for deeper conversation
 
 ### 2. GUI chat system
@@ -28,19 +29,32 @@ ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports pu
 - Category prediction (location / quest / item / skill / NPC / general)
 - Similarity threshold filtering to keep answer quality
 - Aliyun DashScope `text-embedding-v3` (1024-dim) embeddings
+- **Reduced hallucination**: prompts strictly enforce "answer only from the knowledge base, otherwise refuse", with the strongest constraint placed last (recency effect)
+- Tunable answer `llm.temperature` (lower = stricter) and `knowledge.maxDocs` (fewer injected docs = less chance of stitching together a wrong answer)
 
 ### 4. Player knowledge contributions
 - Submit Q&A via a pre-filled book (`Q: ... A: ...`)
 - No complex commands to memorize
 - Configurable per-player pending submission cap
+- **AI pre-review** (`knowledge.playerSubmitReview`): submissions are first judged by the AI for fitness, filtering jokes / ads / off-topic / clearly wrong content; only passing ones enter the OP review queue
+- **Fail-closed**: if the AI service is unavailable, the submission is blocked with a "try again later" message — the knowledge base is never polluted
+- During async review the book is only consumed if it's still in the main hand, so other items can't be deleted by accident
 
-### 5. OP review system
-- Paginated review GUI for pending submissions
+### 5. Auto knowledge collection 🆕
+- Watches the public-chat flow "player asks → someone answers → (asker thanks)" and harvests it into knowledge
+- The AI makes a binary, context-aware pre-review (no scoring), filtering joking / off-topic / meaningless replies
+- A "thanks" from the asker within the thanks window acts as a positive hint and triggers review immediately
+- Passing Q&A enters the review queue tagged with an "auto-collected" source and a "thanked" flag for OP review
+- Does not count against the per-player submission cap; online reviewers can be notified on new entries
+- Runs independently of the public-chat AI broadcast toggle; controlled by `knowledge.autoCollect.enabled`
+
+### 6. OP review system
+- Paginated review GUI for pending submissions, showing source (player / auto-collected), answerer, and thanked state
 - Left-click to **approve** → writes to the knowledge base + pays rewards
 - Right-click to **reject** → removes from the queue
 - Rewards support Vault currency and custom items
 
-### 6. Data persistence
+### 7. Data persistence
 - **Two storage modes** (controlled by `storage.type`):
   - `mysql` — MySQL + HikariCP pool, for multi-server / production setups
   - `yml` — local YAML files, zero-dependency deployment (**default**)
@@ -50,6 +64,17 @@ ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports pu
 ---
 
 ## Changelog
+
+### v1.0.3 (2026-05-28)
+- **Added auto knowledge collection**: watches the "ask → answer → (thanks)" chat flow and queues AI-pre-reviewed Q&A for OP review
+  - New `com.exai.manager.ChatKnowledgeCollector`, `com.exai.service.KnowledgeReviewService`, `com.exai.entity.ReviewResult`
+  - New config group `knowledge.autoCollect` (toggle / answer window / thanks window / min answer length / reviewer notify / thanks keywords)
+- **Optimized public-chat handling to prevent spam**: when the AI has nothing to ground an answer (hits the no-answer marker), the "no relevant info" reply is no longer broadcast
+- **Optimized prompts to reduce hallucination**:
+  - Hard constraint "answer only from the knowledge base, otherwise refuse", with the strongest rule placed at the end of the prompt
+  - New `llm.temperature` (default 0.3) and `knowledge.maxDocs` (default 3)
+  - GUI and public chat now share the same strict grounding template
+- **Player book submissions now go through AI pre-review** (`knowledge.playerSubmitReview`): non-compliant content is blocked; fail-closed when the AI is unavailable
 
 ### v1.0.2 (2026-05-22)
 - **Added local YAML storage mode**: set `storage.type: yml` to run completely without MySQL
@@ -110,6 +135,8 @@ llm:
   baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   model: "qwen-plus"
   apiKey: "your-api-key"
+  # Answer temperature (0~1): lower = stricter / less prone to hallucination; 0.2~0.3 recommended for factual Q&A
+  temperature: 0.3
   # Public-chat trigger keywords
   chatKeywords: "?,how,what,why,where,who,when,can,does,is,are"
   chatResponseCD: 60          # cooldown in seconds
@@ -128,7 +155,19 @@ gui:
 # ==================== Knowledge base ====================
 knowledge:
   minSimilarity: 0.35        # minimum similarity threshold
+  maxDocs: 3                 # max KB docs injected per answer (fewer = less chance of a stitched-together wrong answer; 3~5 recommended)
   maxPendingKnowledgePerPlayer: 30
+  # AI pre-review for player book submissions: non-compliant content (jokes/ads/off-topic/clearly wrong/meaningless) is blocked
+  playerSubmitReview:
+    enabled: true
+  # Auto knowledge collection: watch "player asks -> someone answers -> (asker thanks)" and queue after AI pre-review
+  autoCollect:
+    enabled: true
+    answerWindowSeconds: 60  # answers from others within this many seconds of the question count as candidates
+    thanksWindowSeconds: 20  # wait window for the asker's thanks after an answer; review still runs when it elapses
+    minAnswerLength: 4       # minimum character length to filter out too-short answers
+    notifyReviewers: true    # notify online reviewers when a new entry is collected
+    thanksKeywords: "谢谢,感谢,thx,thanks,3q,谢了,多谢,懂了,明白了,学到了,解决了,有用"
   knowledgeReview:
     opPermission: "exai.op"
     rewards:
@@ -324,7 +363,8 @@ src/main/java/com/exai/
 │   ├── GameDocument.java        # KB document DTO
 │   ├── KnowledgeEntry.java      # KB entry DTO
 │   ├── LogEntry.java            # log entry DTO
-│   └── PlayerQuestion.java      # player question DTO
+│   ├── PlayerQuestion.java      # player question DTO
+│   └── ReviewResult.java        # ★ new in v1.0.3 — AI pre-review result DTO
 ├── generators/
 │   └── AnswerGenerator.java     # answer generation
 ├── gui/
@@ -342,6 +382,7 @@ src/main/java/com/exai/
 │   ├── KnowledgeListener.java   # submission listener
 │   └── PlayerListener.java      # public-chat listener
 ├── manager/
+│   ├── ChatKnowledgeCollector.java  # ★ new in v1.0.3 — auto knowledge collection
 │   ├── EditContextManager.java  # edit-context tracking
 │   ├── KnowledgeFileManager.java  # knowledge.yml I/O
 │   ├── KnowledgeManager.java    # KB business logic
@@ -354,6 +395,7 @@ src/main/java/com/exai/
 │   ├── MySQL.java               # MySQL (HikariCP) impl
 │   └── SQLConsumer.java         # functional SQL helper
 ├── service/
+│   ├── KnowledgeReviewService.java  # ★ new in v1.0.3 — knowledge AI pre-review
 │   └── LLMService.java          # LLM HTTP service
 ├── storage/                     # ★ new in v1.0.2
 │   ├── DataStorage.java         # storage backend interface
@@ -391,6 +433,15 @@ Check:
 
 ### Q: I'm upgrading from a version that used `gamehelp.txt`. What do I need to do?
 Nothing. When the plugin sees a `gamehelp.txt` but no `knowledge.yml`, it migrates entries automatically on first startup and logs how many were imported.
+
+### Q: Auto-collection isn't picking anything up.
+1. Make sure `knowledge.autoCollect.enabled` is `true`
+2. Collection needs "question → someone else's answer": the answer must be a non-question, non-thanks message of length ≥ `minAnswerLength`, posted within `answerWindowSeconds`
+3. Answers go through AI pre-review; joking / meaningless / off-topic ones are silently dropped (look for `[auto-collect] AI review rejected` in the log)
+4. Nothing is stored when the AI service is unavailable — check the console log
+
+### Q: Will auto-collection dump junk into the knowledge base?
+No. Nothing is written directly. Every collected Q&A first passes AI pre-review and then enters the **pending review queue**, where an OP must manually approve it in the review GUI before it's added to the knowledge base.
 
 ---
 
