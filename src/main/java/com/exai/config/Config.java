@@ -37,6 +37,7 @@ public class Config {
     public static String assistantName;
     public static int maxPendingKnowledgePerPlayer;
     public static String currencyName;
+    public static String opPermission;
     public static boolean chatResponseEnabled;
     public static String chatKeywords;
     public static int chatResponseCD;
@@ -52,6 +53,14 @@ public class Config {
     public static boolean autoCollectNotifyReviewers;
     // 玩家书本提交的 AI 初审
     public static boolean playerSubmitReviewEnabled;
+    // 文档导入
+    public static LLMService llm;
+    public static int documentImportChunkSize;
+    public static int documentImportMaxTokens;
+    public static double documentImportTemperature;
+    // 图片导入用的视觉模型（为空则不支持图片导入）；复用 llm 的 apiKey/baseUrl
+    public static String documentImportVisionModel;
+    public static LLMService visionLlm;
 
     public static void loadAll() {
         try {
@@ -95,6 +104,7 @@ public class Config {
             maxDocs = config.getInt("knowledge.maxDocs", 3);
             maxPendingKnowledgePerPlayer = config.getInt("knowledge.maxPendingKnowledgePerPlayer", 30);
             currencyName = config.getString("knowledge.knowledgeReview.rewards.vault.currencyName", "Coin");
+            opPermission = config.getString("knowledge.knowledgeReview.opPermission", "exai.op");
             autoCollectEnabled = config.getBoolean("knowledge.autoCollect.enabled", true);
             autoCollectAnswerWindow = config.getInt("knowledge.autoCollect.answerWindowSeconds", 60);
             autoCollectThanksWindow = config.getInt("knowledge.autoCollect.thanksWindowSeconds", 20);
@@ -103,13 +113,20 @@ public class Config {
                     "谢谢,感谢,thx,thanks,3q,谢了,多谢,懂了,明白了,学到了,解决了,有用");
             autoCollectNotifyReviewers = config.getBoolean("knowledge.autoCollect.notifyReviewers", true);
             playerSubmitReviewEnabled = config.getBoolean("knowledge.playerSubmitReview.enabled", true);
+            documentImportChunkSize = config.getInt("knowledge.documentImport.chunkSize", 1500);
+            documentImportMaxTokens = config.getInt("knowledge.documentImport.maxTokens", 1500);
+            documentImportTemperature = config.getDouble("knowledge.documentImport.temperature", 0.3);
+            documentImportVisionModel = config.getString("knowledge.documentImport.visionModel", "").trim();
             assistantName = config.getString("assistant.name", "ExAI");
             DashScopeEmbedding embeddingService = new DashScopeEmbedding(apiKey);
             VectorStore vectorStore = new VectorStore(embeddingService);
             GameDataLoader dataLoader = new GameDataLoader();
             knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
             knowledgeBase.initializeKnowledgeBase();
-            LLMService llm = new LLMService(apiKey, llmBaseUrl, llmModel, llmTemperature);
+            llm = new LLMService(apiKey, llmBaseUrl, llmModel, llmTemperature);
+            visionLlm = documentImportVisionModel.isEmpty()
+                    ? null
+                    : new LLMService(apiKey, llmBaseUrl, documentImportVisionModel, documentImportTemperature);
             generator = new AnswerGenerator(llm);
             reviewer = new KnowledgeReviewService(llm);
             PlayerListener.registerIfNeeded(ExAI.getInstance());

@@ -5,6 +5,7 @@ import com.exai.data.DataContainer;
 import com.exai.data.KnowledgeQueue;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.LogEntry;
+import com.exai.entity.PendingReward;
 import com.exai.i18n.Lang;
 import com.exai.mysql.MySQL;
 
@@ -24,10 +25,6 @@ public class MysqlStorage implements DataStorage {
     public MysqlStorage() {
         this.sql = new MySQL(Config.address, Config.database, Config.username, Config.password);
         DataContainer.sql = this.sql;
-    }
-
-    public MySQL getSql() {
-        return sql;
     }
 
     @Override
@@ -84,6 +81,16 @@ public class MysqlStorage implements DataStorage {
             addColumnIfMissing(connection, "ex_pending_knowledge", "source", "VARCHAR(32) DEFAULT 'player'");
             addColumnIfMissing(connection, "ex_pending_knowledge", "thanked", "TINYINT(1) DEFAULT 0");
             System.out.println(Lang.get("log.pending-knowledge-table-ok"));
+
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS ex_pending_reward (" +
+                    "id INT AUTO_INCREMENT PRIMARY KEY, " +
+                    "player_name VARCHAR(32) NOT NULL, " +
+                    "item VARCHAR(64), " +
+                    "message TEXT, " +
+                    "create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                    "INDEX idx_player_name (player_name)" +
+                    ")");
+            System.out.println(Lang.get("log.pending-reward-table-ok"));
 
         } catch (SQLException e) {
             System.err.println("Failed to create table: " + e.getMessage());
@@ -331,5 +338,76 @@ public class MysqlStorage implements DataStorage {
             System.err.println("Failed to delete AI log: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    @Override
+    public void addPendingRewards(String playerName, List<String> items, List<String> messages) {
+        String insertSQL = "INSERT INTO ex_pending_reward (player_name, item, message) VALUES (?, ?, ?)";
+        try (Connection connection = sql.getConnection();
+             PreparedStatement pstmt = connection.prepareStatement(insertSQL)) {
+            if (items != null) {
+                for (String item : items) {
+                    pstmt.setString(1, playerName);
+                    pstmt.setString(2, item);
+                    pstmt.setNull(3, java.sql.Types.VARCHAR);
+                    pstmt.addBatch();
+                }
+            }
+            if (messages != null) {
+                for (String message : messages) {
+                    pstmt.setString(1, playerName);
+                    pstmt.setNull(2, java.sql.Types.VARCHAR);
+                    pstmt.setString(3, message);
+                    pstmt.addBatch();
+                }
+            }
+            pstmt.executeBatch();
+        } catch (SQLException e) {
+            System.err.println("Failed to insert pending reward: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public PendingReward takePendingRewards(String playerName) {
+        List<String> items = new ArrayList<>();
+        List<String> messages = new ArrayList<>();
+        List<Integer> ids = new ArrayList<>();
+        String querySQL = "SELECT id, item, message FROM ex_pending_reward WHERE player_name = ? ORDER BY id";
+        try (Connection connection = sql.getConnection();
+             PreparedStatement pstmt = connection.prepareStatement(querySQL)) {
+            pstmt.setString(1, playerName);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    ids.add(rs.getInt("id"));
+                    String item = rs.getString("item");
+                    String message = rs.getString("message");
+                    if (item != null) {
+                        items.add(item);
+                    }
+                    if (message != null) {
+                        messages.add(message);
+                    }
+                }
+            }
+            // 仅删除本次读到的行，避免删掉读取期间新插入的奖励
+            if (!ids.isEmpty()) {
+                StringBuilder deleteSQL = new StringBuilder("DELETE FROM ex_pending_reward WHERE id IN (");
+                for (int i = 0; i < ids.size(); i++) {
+                    deleteSQL.append(i == 0 ? "?" : ",?");
+                }
+                deleteSQL.append(")");
+                try (PreparedStatement del = connection.prepareStatement(deleteSQL.toString())) {
+                    for (int i = 0; i < ids.size(); i++) {
+                        del.setInt(i + 1, ids.get(i));
+                    }
+                    del.executeUpdate();
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Failed to take pending rewards: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return new PendingReward(items, messages);
     }
 }

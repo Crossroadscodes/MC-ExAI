@@ -97,6 +97,40 @@ public class KnowledgeManager {
         return true;
     }
 
+    /**
+     * 提交一条由文档导入、经大模型切分抽取的问答到待审核队列。
+     * 与玩家手动提交不同：不计入玩家每日上传上限，带「文档导入」来源标记，submitter 记录来源文档名。
+     *
+     * @param sourceFile 来源文档名（仅用于审核时展示，不写入玩家计数映射，approve 时不会发奖励）
+     * @return 是否成功入队（重复问题或写入失败时返回 false）
+     */
+    public static boolean submitImported(String question, String answer, String sourceFile) {
+        if (question == null || answer == null) {
+            return false;
+        }
+        question = question.trim();
+        answer = answer.trim();
+        if (question.isEmpty() || answer.isEmpty()) {
+            return false;
+        }
+        if (KnowledgeQueue.isDuplicate(question)
+                || DataUtils.isPendingKnowledgeDuplicate(question)
+                || KnowledgeFileManager.isDuplicateQuestion(question)) {
+            return false;
+        }
+
+        KnowledgeEntry entry = new KnowledgeEntry(question, answer,
+                sourceFile == null ? "" : sourceFile, System.currentTimeMillis());
+        entry.setSource("import");
+
+        int dbId = DataUtils.insertPendingKnowledge(entry);
+        if (dbId == -1) {
+            return false;
+        }
+        KnowledgeQueue.addWithId(entry, dbId);
+        return true;
+    }
+
     public static void approveKnowledge(int page, int index, int pageSize) {
         KnowledgeEntry entry = KnowledgeQueue.getPage(page, pageSize).get(index);
         if (entry != null) {

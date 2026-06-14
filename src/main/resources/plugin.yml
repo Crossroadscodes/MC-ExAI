@@ -6,4 +6,4 @@ softdepend:
 commands:
   exai:
     description: ExAI插件主命令
-    usage: /exai <reload|opengui|question|help>
+    usage: /exai <reload|opengui|question|import|help>

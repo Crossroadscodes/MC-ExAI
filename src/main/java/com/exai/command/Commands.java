@@ -6,6 +6,7 @@ import com.exai.entity.Answer;
 import com.exai.entity.PlayerQuestion;
 import com.exai.gui.ChestGUI;
 import com.exai.i18n.Lang;
+import com.exai.service.DocumentImportService;
 import com.exai.utils.CDUtils;
 import com.exai.utils.DataUtils;
 import org.bukkit.Bukkit;
@@ -21,7 +22,7 @@ import java.util.stream.Collectors;
 
 public class Commands implements CommandExecutor, TabCompleter {
 
-    private static final String[] SUB_COMMANDS = {"reload", "opengui", "question", "help"};
+    private static final String[] SUB_COMMANDS = {"reload", "opengui", "question", "import", "help"};
 
     @Override
     public boolean onCommand(CommandSender sender, org.bukkit.command.Command command, String label, String[] args) {
@@ -34,7 +35,7 @@ public class Commands implements CommandExecutor, TabCompleter {
             String subCommand = args[0].toLowerCase();
 
             if (sender instanceof Player) {
-                if ((subCommand.equals("reload") || subCommand.equals("question")) && !sender.isOp()) {
+                if ((subCommand.equals("reload") || subCommand.equals("question") || subCommand.equals("import")) && !sender.isOp()) {
                     sender.sendMessage(Lang.get("command.no-permission"));
                     return false;
                 }
@@ -76,6 +77,16 @@ public class Commands implements CommandExecutor, TabCompleter {
                     }
                     return true;
 
+                case "import":
+                    if (args.length < 2) {
+                        sender.sendMessage(Lang.get("command.import-usage"));
+                        return false;
+                    }
+                    String importFile = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
+                    Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(),
+                            () -> DocumentImportService.importFile(sender, importFile));
+                    return true;
+
                 case "help":
                     sendHelp(sender);
                     return true;
@@ -95,6 +106,7 @@ public class Commands implements CommandExecutor, TabCompleter {
             sender.sendMessage(Lang.get("command.help-reload"));
             sender.sendMessage(Lang.get("command.help-opengui"));
             sender.sendMessage(Lang.get("command.help-question"));
+            sender.sendMessage(Lang.get("command.help-import"));
         } else {
             sender.sendMessage(Lang.get("command.help-opengui"));
         }
@@ -113,6 +125,16 @@ public class Commands implements CommandExecutor, TabCompleter {
             String input = args[1].toLowerCase();
             return Bukkit.getOnlinePlayers().stream()
                     .map(Player::getName)
+                    .filter(name -> name.toLowerCase().startsWith(input))
+                    .collect(Collectors.toList());
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("import") && sender.isOp()) {
+            String input = args[1].toLowerCase();
+            String[] files = DocumentImportService.importFolder().list(
+                    (dir, name) -> DocumentImportService.isSupported(name));
+            if (files == null) {
+                return Collections.emptyList();
+            }
+            return Arrays.stream(files)
                     .filter(name -> name.toLowerCase().startsWith(input))
                     .collect(Collectors.toList());
         }

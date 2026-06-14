@@ -5,6 +5,7 @@ import com.exai.data.DataContainer;
 import com.exai.listener.ChatInputListener;
 import com.exai.listener.GUIListener;
 import com.exai.listener.KnowledgeListener;
+import com.exai.service.DocumentImportService;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class ExAI extends JavaPlugin {
@@ -16,6 +17,7 @@ public final class ExAI extends JavaPlugin {
     public void onEnable() {
         instance = this;
         Config.loadAll();
+        DocumentImportService.importFolder();
         getServer().getPluginManager().registerEvents(new ChatInputListener(), this);
         getServer().getPluginManager().registerEvents(new GUIListener(), this);
         getServer().getPluginManager().registerEvents(new KnowledgeListener(), this);

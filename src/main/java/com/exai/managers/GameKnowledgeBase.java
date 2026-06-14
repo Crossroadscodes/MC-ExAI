@@ -7,6 +7,7 @@ import com.exai.entity.GameDocument;
 import com.exai.i18n.Lang;
 import org.bukkit.Bukkit;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -29,11 +30,14 @@ public class GameKnowledgeBase {
     public void initializeKnowledgeBase() {
         Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> {
             List<GameDocument> documents = dataLoader.loadGameData();
+            List<String> contents = new ArrayList<>(documents.size());
+            // addDocument 内部会生成并写入嵌入(命中缓存则不调接口)，此处不再重复生成
             documents.forEach(doc -> {
-                double[] embedding = embeddingService.generateEmbedding(doc.getContent());
-                doc.setEmbedding(embedding);
                 vectorStore.addDocument(doc);
+                contents.add(doc.getContent());
             });
+            // 把本次活跃文档的嵌入落盘，下次启动/重载只需为新增或变更的片段调用接口
+            embeddingService.persistCache(contents);
         });
     }
 

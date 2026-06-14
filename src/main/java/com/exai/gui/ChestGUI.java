@@ -36,9 +36,13 @@ public class ChestGUI {
         inventory.setItem(SLOT_CHAT, createButton(cdEnded, cdRemaining));
         inventory.setItem(SLOT_INFO, createInfoItem());
         inventory.setItem(SLOT_SUBMIT, createSubmitButton());
-        inventory.setItem(SLOT_REVIEW, createReviewButton());
-        inventory.setItem(SLOT_HISTORY, createHistoryButton());
-        inventory.setItem(SLOT_KB, createKnowledgeBaseButton());
+
+        // 仅拥有审核权限的管理员可见：审核、历史对话、知识库管理
+        if (player.hasPermission(Config.opPermission)) {
+            inventory.setItem(SLOT_REVIEW, createReviewButton());
+            inventory.setItem(SLOT_HISTORY, createHistoryButton());
+            inventory.setItem(SLOT_KB, createKnowledgeBaseButton());
+        }
 
         player.openInventory(inventory);
     }
@@ -77,10 +81,12 @@ public class ChestGUI {
         ItemStack item = new ItemStack(MaterialCompat.BOOK_AND_QUILL());
         ItemMeta meta = item.getItemMeta();
         meta.setDisplayName(Lang.get("gui.upload-button"));
-        meta.setLore(java.util.Arrays.asList(
-                Lang.get("gui.upload-lore1"),
-                Lang.get("gui.upload-lore2")
-        ));
+        java.util.List<String> lore = new java.util.ArrayList<>();
+        lore.add(Lang.get("gui.upload-lore1"));
+        lore.add(Lang.get("gui.upload-lore2"));
+        // 让玩家看到知识被采纳后可获得的奖励
+        lore.addAll(com.exai.manager.RewardManager.getRewardLoreLines());
+        meta.setLore(lore);
         item.setItemMeta(meta);
         return item;
     }

@@ -5,6 +5,7 @@ import com.exai.data.DataContainer;
 import com.exai.data.KnowledgeQueue;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.LogEntry;
+import com.exai.entity.PendingReward;
 import com.exai.i18n.Lang;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -23,18 +24,22 @@ public class YamlStorage implements DataStorage {
     private static final String LOG_FILE = "data/ai_log.yml";
     private static final String PENDING_FILE = "data/pending_knowledge.yml";
     private static final String COUNT_FILE = "data/pending_count.yml";
+    private static final String REWARD_FILE = "data/pending_rewards.yml";
 
     private final Object logLock = new Object();
     private final Object pendingLock = new Object();
     private final Object countLock = new Object();
+    private final Object rewardLock = new Object();
 
     private File logFile;
     private File pendingFile;
     private File countFile;
+    private File rewardFile;
 
     private YamlConfiguration logConf;
     private YamlConfiguration pendingConf;
     private YamlConfiguration countConf;
+    private YamlConfiguration rewardConf;
 
     @Override
     public void initialize() {
@@ -45,10 +50,12 @@ public class YamlStorage implements DataStorage {
         logFile = new File(ExAI.getInstance().getDataFolder(), LOG_FILE);
         pendingFile = new File(ExAI.getInstance().getDataFolder(), PENDING_FILE);
         countFile = new File(ExAI.getInstance().getDataFolder(), COUNT_FILE);
+        rewardFile = new File(ExAI.getInstance().getDataFolder(), REWARD_FILE);
 
         logConf = YamlConfiguration.loadConfiguration(logFile);
         pendingConf = YamlConfiguration.loadConfiguration(pendingFile);
         countConf = YamlConfiguration.loadConfiguration(countFile);
+        rewardConf = YamlConfiguration.loadConfiguration(rewardFile);
 
         if (!logConf.contains("next-id")) {
             logConf.set("next-id", 1);
@@ -73,6 +80,9 @@ public class YamlStorage implements DataStorage {
         }
         synchronized (countLock) {
             saveQuietly(countConf, countFile);
+        }
+        synchronized (rewardLock) {
+            saveQuietly(rewardConf, rewardFile);
         }
     }
 
@@ -276,6 +286,44 @@ public class YamlStorage implements DataStorage {
         synchronized (logLock) {
             logConf.set("entries." + id, null);
             saveQuietly(logConf, logFile);
+        }
+    }
+
+    private static String rewardKey(String playerName) {
+        return playerName.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    @Override
+    public void addPendingRewards(String playerName, List<String> items, List<String> messages) {
+        synchronized (rewardLock) {
+            String base = "players." + rewardKey(playerName);
+            rewardConf.set(base + ".name", playerName);
+            if (items != null && !items.isEmpty()) {
+                List<String> existing = rewardConf.getStringList(base + ".items");
+                existing.addAll(items);
+                rewardConf.set(base + ".items", existing);
+            }
+            if (messages != null && !messages.isEmpty()) {
+                List<String> existing = rewardConf.getStringList(base + ".messages");
+                existing.addAll(messages);
+                rewardConf.set(base + ".messages", existing);
+            }
+            saveQuietly(rewardConf, rewardFile);
+        }
+    }
+
+    @Override
+    public PendingReward takePendingRewards(String playerName) {
+        synchronized (rewardLock) {
+            String base = "players." + rewardKey(playerName);
+            if (!rewardConf.contains(base)) {
+                return new PendingReward(new ArrayList<>(), new ArrayList<>());
+            }
+            List<String> items = new ArrayList<>(rewardConf.getStringList(base + ".items"));
+            List<String> messages = new ArrayList<>(rewardConf.getStringList(base + ".messages"));
+            rewardConf.set(base, null);
+            saveQuietly(rewardConf, rewardFile);
+            return new PendingReward(items, messages);
         }
     }
 }

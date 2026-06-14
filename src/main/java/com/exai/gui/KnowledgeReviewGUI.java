@@ -33,7 +33,7 @@ public class KnowledgeReviewGUI {
     private static Economy economy = null;
 
     public static void open(Player player) {
-        if (!player.hasPermission(Config.config.getString("knowledgeReview.opPermission", "exai.op"))) {
+        if (!player.hasPermission(Config.opPermission)) {
             player.sendMessage(Lang.get("gui.review-no-permission"));
             return;
         }
@@ -90,6 +90,9 @@ public class KnowledgeReviewGUI {
             if (entry.isThanked()) {
                 lore.add(Lang.get("gui.knowledge-thanked"));
             }
+        } else if ("import".equals(entry.getSource())) {
+            lore.add(Lang.get("gui.knowledge-source-import"));
+            lore.add(Lang.get("gui.knowledge-submitter", entry.getSubmitter()));
         } else {
             lore.add(Lang.get("gui.knowledge-source-player"));
             lore.add(Lang.get("gui.knowledge-submitter", entry.getSubmitter()));
@@ -192,8 +195,10 @@ public class KnowledgeReviewGUI {
     }
 
     private static void approveAndClose(Player player, KnowledgeEntry entry) {
+        String submitter = entry.getSubmitter();
+        String source = entry.getSource();
         KnowledgeManager.approveKnowledge(currentPage, KnowledgeQueue.getPage(currentPage, PAGE_SIZE).indexOf(entry), PAGE_SIZE);
-        RewardManager.giveReward(player);
+        RewardManager.rewardSubmitter(submitter, source);
         player.sendMessage(Lang.get("gui.approved", Config.assistantName));
         player.closeInventory();
     }

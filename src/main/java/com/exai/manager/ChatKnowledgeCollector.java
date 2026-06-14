@@ -163,11 +163,10 @@ public class ChatKnowledgeCollector {
         if (!Config.autoCollectNotifyReviewers) {
             return;
         }
-        String permission = Config.config.getString("knowledge.knowledgeReview.opPermission", "exai.op");
         String msg = Lang.get("chat.auto-collect-notify", Config.assistantName);
         Bukkit.getScheduler().runTask(ExAI.getInstance(), () -> {
             for (Player online : Bukkit.getOnlinePlayers()) {
-                if (online.hasPermission(permission)) {
+                if (online.hasPermission(Config.opPermission)) {
                     online.sendMessage(msg);
                 }
             }

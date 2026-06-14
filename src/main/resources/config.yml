@@ -62,6 +62,19 @@ knowledge:
     notifyReviewers: true
     # 感谢关键词(英文逗号分隔)，命中即视为提问者致谢
     thanksKeywords: "谢谢,感谢,thx,thanks,3q,谢了,多谢,懂了,明白了,学到了,解决了,有用"
+  # 文档导入：把 plugins/ExAI/import/ 下的文档分片送入大模型，抽取成一条条问答知识，
+  # 进入待审核队列由管理员逐段复核。使用命令 /exai import <文件名> 触发(仅 OP)。
+  # 支持格式：txt / md / docx（老 .doc 不支持，请另存为 docx）；图片(png/jpg/jpeg/gif/bmp/webp)需配置下方 visionModel。
+  documentImport:
+    # 单次送入大模型的文档片段字符数：过大可能超出模型上下文，过小会增加调用次数
+    chunkSize: 1500
+    # 单次抽取允许的最大输出 token
+    maxTokens: 1500
+    # 抽取温度 (0~1)：低一些更忠于原文、更不易编造
+    temperature: 0.3
+    # 图片导入用的视觉模型(复用上方 llm 的 apiKey 与 baseUrl)。留空则不支持图片导入。
+    # DashScope 可填 qwen-vl-plus 或 qwen-vl-max 等支持视觉的模型。
+    visionModel: ""
   knowledgeReview:
     opPermission: "exai.op"
     rewards:

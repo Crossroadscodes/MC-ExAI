@@ -19,6 +19,15 @@ command:
   help-reload: "&e/exai reload &7- Reload plugin config"
   help-opengui: "&e/exai opengui &7- Open ExAI GUI"
   help-question: "&e/exai question <player> <question> &7- Send a question to a player"
+  help-import: "&e/exai import <file> &7- Import a doc/image from import/ into knowledge"
+  import-usage: "&cUsage: /exai import <file> (place files in plugins/ExAI/import/)"
+  import-not-found: "&cImport file not found: {0} (place it in plugins/ExAI/import/)"
+  import-bad-ext: "&cOnly txt/md/docx and images (png/jpg/jpeg/gif/bmp/webp) are supported: {0}"
+  import-vision-disabled: "&cNo vision model configured, cannot import images. Set knowledge.documentImport.visionModel in config.yml (e.g. qwen-vl-max) and reload."
+  import-empty: "&eThe document is empty or has no extractable content: {0}"
+  import-started: "&aImporting {0}; the model is splitting and extracting knowledge, please wait..."
+  import-progress: "&7Import progress: chunk {0}/{1}, {2} entries queued so far"
+  import-done: "&aImport of {0} done: &e{1}&a added, &e{2}&a skipped (duplicate), &e{3}&a failed. Please review them."
 
 gui:
   default-title: "{0} Assistant"
@@ -38,6 +47,9 @@ gui:
   upload-button: "&a&l[ Upload Knowledge ]"
   upload-lore1: "&7Click to get an upload book"
   upload-lore2: "&7Edit and click Done to submit"
+  upload-reward-header: "&eReward if approved:"
+  upload-reward-vault: "&7- &e{0} {1}"
+  upload-reward-item: "&7- &e{0}x {1}"
   review-button: "&6&l[ Reviewer Panel ]"
   review-lore1: "&7Click to open review panel"
   review-lore2: "&7Permission required"
@@ -54,13 +66,14 @@ gui:
   knowledge-submitter: "&7Submitter: &f{0}"
   knowledge-source-auto: "&bSource: &fAuto-collected from chat"
   knowledge-source-player: "&7Source: &fPlayer submission"
+  knowledge-source-import: "&eSource: &fDocument import"
   knowledge-answerer: "&7Answered by: &f{0}"
   knowledge-thanked: "&a✔ Asker said thanks"
   knowledge-question: "&6Q: &f{0}"
   knowledge-answer: "&6A: &f{0}"
   knowledge-left-click: "&aLeft-click: Approve"
   knowledge-right-click: "&cRight-click: Reject"
-  approved: "&a[{0}] Approved and rewarded!"
+  approved: "&a[{0}] Approved; the reward has been sent to the submitter!"
   rejected: "&c[{0}] Rejected: {1}"
   history-button: "&b&l[ Chat History ]"
   history-lore1: "&7View player Q&A history"
@@ -118,10 +131,12 @@ chat:
   response: "&c[{0}]&f {1}"
   broadcast: "&c[{0}]&a @{1} &f{2}{3}"
   auto-collect-notify: "&b[{0}] Auto-collected a Q&A from chat; please review it."
+  reviewer-login-notify: "&b[{0}] There are &e{1} &bknowledge entries awaiting review. Use /exai opengui to open the review panel."
 
 reward:
   vault: "&a[{0}] Received &e{1} &a{2}!"
   item: "&a[{0}] Received &e{1}x {2}&a!"
+  queued-notice: "&a[{0}] Your submitted knowledge was approved. Rewards:"
 
 service:
   llm:
@@ -154,6 +169,31 @@ review:
     {"pass": true or false, "reason": "short reason"}
     where pass means whether this Q&A is suitable to store as knowledge.
   thanks-hint: "Note: the asker thanked this answer afterwards, suggesting it was actually helpful; take this into account.\n"
+
+# Document import extraction prompt (the document chunk is appended right after this text; never use & in the body)
+import:
+  prompt: |-
+    You are a knowledge-base curator for a Minecraft server. Below is a chunk of game documentation.
+    Extract the knowledge points that can be phrased as "a question a player would ask + its answer".
+    Requirements:
+    1. Use only the document content; do not fabricate or add information beyond it.
+    2. Make each question self-contained (understandable without context); keep answers accurate and concise.
+    3. One chunk may yield multiple Q&As; if the chunk has nothing worth storing, output an empty array [].
+    4. No greetings, no explanations, no code fences.
+    Output only one JSON array, in this format:
+    [{"question": "question 1", "answer": "answer 1"}, {"question": "question 2", "answer": "answer 2"}]
+    Here is the document chunk:
+  # Image extraction prompt (sent together with the image to the vision model; never use & in the body)
+  import-image: |-
+    You are a knowledge-base curator for a Minecraft server. Carefully read all text and information in this image (it may be a guide screenshot, table, or instructions).
+    Extract the knowledge points that can be phrased as "a question a player would ask + its answer".
+    Requirements:
+    1. Use only what is actually visible in the image; do not fabricate or guess.
+    2. Make each question self-contained; keep answers accurate and concise.
+    3. You may produce multiple Q&As; if the image has nothing worth storing, output an empty array [].
+    4. No greetings, no explanations, no code fences.
+    Output only one JSON array, in this format:
+    [{"question": "question 1", "answer": "answer 1"}, {"question": "question 2", "answer": "answer 2"}]
 
 action:
   go: "Travel"
@@ -195,10 +235,13 @@ log:
   log-table-ok: "AI log table created."
   pending-count-table-ok: "Pending count table created."
   pending-knowledge-table-ok: "Pending knowledge table created."
+  pending-reward-table-ok: "Pending reward table created."
   loaded-pending: "Loaded {0} pending knowledge entries"
   rebuilt-state: "Player pending count state rebuilt"
   loaded-docs: "Loaded {0} documents"
   read-knowledge-yml: "Reading knowledge.yml from data folder..."
+  embedding-cache-loaded: "Loaded {0} cached embeddings (unchanged knowledge skips the embedding API)"
+  embedding-cache-saved: "Embedding cache written: {0} vectors"
   migrated-gamehelp-yml: "Migrated {0} entries from gamehelp.txt to knowledge.yml"
   storage-mode-mysql: "Storage mode: MySQL"
   storage-mode-yml: "Storage mode: local YAML"

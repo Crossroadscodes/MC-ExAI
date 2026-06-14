@@ -2,10 +2,12 @@ package com.exai.listener;
 
 import com.exai.ExAI;
 import com.exai.config.Config;
+import com.exai.data.KnowledgeQueue;
 import com.exai.entity.Answer;
 import com.exai.entity.PlayerQuestion;
 import com.exai.i18n.Lang;
 import com.exai.manager.ChatKnowledgeCollector;
+import com.exai.manager.RewardManager;
 import com.exai.utils.CDUtils;
 import com.exai.utils.DataUtils;
 import org.bukkit.Bukkit;
@@ -14,6 +16,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public class PlayerListener implements Listener {
@@ -63,6 +66,27 @@ public class PlayerListener implements Listener {
                 e.printStackTrace();
             }
         });
+    }
+
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        // 延迟发放，确保提示在登录刷屏之后才出现
+        Bukkit.getScheduler().runTaskLater(ExAI.getInstance(), () -> {
+            // 玩家若已离线则跳过，避免奖励被取出却发放失败而丢失
+            if (!player.isOnline()) {
+                return;
+            }
+            // 发放离线期间累计的知识采纳奖励
+            RewardManager.deliverQueued(player);
+            // 提醒审核员有多少待审核知识
+            if (player.hasPermission(Config.opPermission)) {
+                int pending = KnowledgeQueue.getTotalCount();
+                if (pending > 0) {
+                    player.sendMessage(Lang.get("chat.reviewer-login-notify", Config.assistantName, pending));
+                }
+            }
+        }, 40L);
     }
 
     private boolean isQuestion(String message) {

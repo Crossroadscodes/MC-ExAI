@@ -20,6 +20,15 @@ command:
   help-reload: "&e/exai reload &7- 重载插件配置"
   help-opengui: "&e/exai opengui &7- 打开ExAI GUI界面"
   help-question: "&e/exai question <玩家> <问题> &7- 向指定玩家发送问题"
+  help-import: "&e/exai import <文件名> &7- 导入 import/ 下的文档/图片生成知识"
+  import-usage: "&c用法: /exai import <文件名>（文件需放在 plugins/ExAI/import/ 下）"
+  import-not-found: "&c找不到导入文件: {0}（请放到 plugins/ExAI/import/ 下）"
+  import-bad-ext: "&c仅支持 txt/md/docx 与图片(png/jpg/jpeg/gif/bmp/webp): {0}"
+  import-vision-disabled: "&c未配置视觉模型，无法导入图片。请在 config.yml 的 knowledge.documentImport.visionModel 填入支持视觉的模型(如 qwen-vl-max)后重载。"
+  import-empty: "&e文档为空或没有可抽取的内容: {0}"
+  import-started: "&a开始导入文档 {0}，正在用大模型切分抽取知识，请稍候..."
+  import-progress: "&7导入进度: 第 {0}/{1} 片，已新增 {2} 条待审核知识"
+  import-done: "&a文档 {0} 导入完成：新增 &e{1}&a 条，跳过(重复) &e{2}&a 条，失败 &e{3}&a 条。请到审核界面复核。"
 
 # GUI
 gui:
@@ -40,6 +49,9 @@ gui:
   upload-button: "&a&l[ 上传知识 ]"
   upload-lore1: "&7点击获取知识上传书本"
   upload-lore2: "&7编辑后点击完成即可提交"
+  upload-reward-header: "&e被采纳后可获得奖励:"
+  upload-reward-vault: "&7- &e{0} {1}"
+  upload-reward-item: "&7- &e{0}x {1}"
   review-button: "&6&l[ 审核员审核 ]"
   review-lore1: "&7点击打开知识审核界面"
   review-lore2: "&7仅拥有权限可用"
@@ -56,13 +68,14 @@ gui:
   knowledge-submitter: "&7提交者: &f{0}"
   knowledge-source-auto: "&b来源: &f公屏自动采集"
   knowledge-source-player: "&7来源: &f玩家提交"
+  knowledge-source-import: "&e来源: &f文档导入"
   knowledge-answerer: "&7回答者: &f{0}"
   knowledge-thanked: "&a✔ 提问者已致谢"
   knowledge-question: "&6问：&f{0}"
   knowledge-answer: "&6答：&f{0}"
   knowledge-left-click: "&a左键：批准"
   knowledge-right-click: "&c右键：拒绝"
-  approved: "&a[{0}] 已批准知识并发放奖励！"
+  approved: "&a[{0}] 已批准知识，奖励已发放给提交者！"
   rejected: "&c[{0}] 已拒绝知识: {1}"
   history-button: "&b&l[ 历史对话 ]"
   history-lore1: "&7点击查看玩家提问与回复历史"
@@ -122,11 +135,13 @@ chat:
   response: "&c【{0}】&f{1}"
   broadcast: "&c【{0}】&a@{1}&f{2}{3}"
   auto-collect-notify: "&b【{0}】公屏自动采集到一条问答，请到审核界面复核~"
+  reviewer-login-notify: "&b【{0}】当前有 &e{1} &b条知识待审核，请使用 /exai opengui 进入审核界面~"
 
 # 奖励
 reward:
   vault: "&a[{0}] 获得 &e{1} &a{2}奖励！"
   item: "&a[{0}] 获得 &e{1}个 {2} &a奖励！"
+  queued-notice: "&a[{0}] 你提交的知识已被采纳，发放奖励如下："
 
 # 助手默认回复（建议保留中文，让大模型用中文回答）
 service:
@@ -161,6 +176,32 @@ review:
     {"pass": true或false, "reason": "简短中文理由"}
     pass 表示这条问答是否适合作为知识入库。
   thanks-hint: "补充信息：提问者随后对该回答表示了感谢，说明该回答可能确实有帮助，请将此作为参考。\n"
+
+# 文档导入抽取 Prompt（模型把下方文档片段整理成问答知识；切勿在正文里使用 & 符号）
+# 注意：文档片段会被原样追加在本段文字之后，故本段结尾请明确「下面是文档片段」之类的引导。
+import:
+  prompt: |-
+    你是一个MC游戏服务器的知识库整理员。下面会给你一段游戏资料文档片段。
+    请把其中可以作为「玩家会问的问题 + 对应答案」的知识点提炼出来，整理成问答形式。
+    要求：
+    1. 只依据文档内容，不要编造、不要补充文档之外的信息；
+    2. 问题要自包含（不依赖上下文也能看懂），答案要准确简洁；
+    3. 一个片段可产出多条问答；若该片段没有可作为知识的内容，输出空数组 []；
+    4. 不要寒暄，不要解释，不要代码块标记。
+    只输出一个JSON数组，格式如下：
+    [{"question": "问题1", "answer": "答案1"}, {"question": "问题2", "answer": "答案2"}]
+    下面是文档片段：
+  # 图片识别抽取 Prompt（随图片一起发给视觉模型；切勿在正文里使用 & 符号）
+  import-image: |-
+    你是一个MC游戏服务器的知识库整理员。请仔细查看这张图片中的全部文字与信息（可能是攻略截图、表格、说明等）。
+    把其中可以作为「玩家会问的问题 + 对应答案」的知识点提炼出来，整理成问答形式。
+    要求：
+    1. 只依据图片中真实可见的内容，不要编造、不要脑补；
+    2. 问题要自包含（不依赖上下文也能看懂），答案要准确简洁；
+    3. 可产出多条问答；若图片中没有可作为知识的内容，输出空数组 []；
+    4. 不要寒暄，不要解释，不要代码块标记。
+    只输出一个JSON数组，格式如下：
+    [{"question": "问题1", "answer": "答案1"}, {"question": "问题2", "answer": "答案2"}]
 
 # 动作识别（用于建议玩家下一步操作）
 action:
@@ -206,10 +247,13 @@ log:
   log-table-ok: "玩家问答表创建成功！"
   pending-count-table-ok: "待审核知识计数表创建成功！"
   pending-knowledge-table-ok: "待审核知识表创建成功！"
+  pending-reward-table-ok: "离线奖励表创建成功！"
   loaded-pending: "已加载 {0} 条待审核知识"
   rebuilt-state: "已重建玩家待审核计数状态"
   loaded-docs: "成功加载 {0} 个文档"
   read-knowledge-yml: "从数据文件夹读取knowledge.yml..."
+  embedding-cache-loaded: "已从缓存加载 {0} 条嵌入向量(未变更的知识无需重新调用嵌入接口)"
+  embedding-cache-saved: "已写入嵌入缓存：{0} 条向量"
   migrated-gamehelp-yml: "已将 {0} 条历史知识从 gamehelp.txt 迁移到 knowledge.yml"
   storage-mode-mysql: "存储模式：MySQL"
   storage-mode-yml: "存储模式：本地 YAML"

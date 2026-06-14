@@ -40,6 +40,49 @@ public class LLMService {
         }
     }
 
+    /**
+     * 多模态视觉补全：把一段文字提示与一张图片一起送给视觉模型（如 qwen-vl-*）。
+     * 本实例的 {@code model} 必须是支持视觉的模型。失败或无内容时返回 null。
+     *
+     * @param imageDataUrl 形如 {@code data:image/png;base64,xxxx} 的图片数据 URL
+     */
+    public String completeVision(String prompt, String imageDataUrl, double temperature, int maxTokens) {
+        try {
+            return requestVision(prompt, imageDataUrl, temperature, maxTokens);
+        } catch (Exception e) {
+            System.err.println("LLM vision call error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private String requestVision(String prompt, String imageDataUrl, double temperature, int maxTokens) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("model", model);
+        body.addProperty("temperature", temperature);
+        body.addProperty("max_tokens", maxTokens);
+
+        JsonArray content = new JsonArray();
+        JsonObject textPart = new JsonObject();
+        textPart.addProperty("type", "text");
+        textPart.addProperty("text", prompt);
+        content.add(textPart);
+        JsonObject imagePart = new JsonObject();
+        imagePart.addProperty("type", "image_url");
+        JsonObject imageUrl = new JsonObject();
+        imageUrl.addProperty("url", imageDataUrl);
+        imagePart.add("image_url", imageUrl);
+        content.add(imagePart);
+
+        JsonObject userMsg = new JsonObject();
+        userMsg.addProperty("role", "user");
+        userMsg.add("content", content);
+        JsonArray messages = new JsonArray();
+        messages.add(userMsg);
+        body.add("messages", messages);
+
+        return parseContent(HttpJsonClient.postJson(baseUrl + "/chat/completions", apiKey, body));
+    }
+
     private String request(String prompt, double temperature, int maxTokens) throws Exception {
         JsonObject body = new JsonObject();
         body.addProperty("model", model);
@@ -53,9 +96,11 @@ public class LLMService {
         messages.add(userMsg);
         body.add("messages", messages);
 
-        JsonObject resp = HttpJsonClient.postJson(
-                baseUrl + "/chat/completions", apiKey, body);
+        return parseContent(HttpJsonClient.postJson(
+                baseUrl + "/chat/completions", apiKey, body));
+    }
 
+    private static String parseContent(JsonObject resp) {
         if (resp != null && resp.has("choices")) {
             JsonArray choices = resp.getAsJsonArray("choices");
             if (choices.size() > 0) {

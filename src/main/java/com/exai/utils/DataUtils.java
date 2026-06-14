@@ -4,6 +4,7 @@ import com.exai.ExAI;
 import com.exai.data.DataContainer;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.LogEntry;
+import com.exai.entity.PendingReward;
 import org.bukkit.Bukkit;
 
 import java.util.Collections;
@@ -104,5 +105,22 @@ public class DataUtils {
 
     public static void deleteLogAsync(int id) {
         Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> deleteLog(id));
+    }
+
+    public static void addPendingRewards(String playerName, List<String> items, List<String> messages) {
+        if (DataContainer.storage != null) {
+            DataContainer.storage.addPendingRewards(playerName, items, messages);
+        }
+    }
+
+    public static void addPendingRewardsAsync(String playerName, List<String> items, List<String> messages) {
+        Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(),
+                () -> addPendingRewards(playerName, items, messages));
+    }
+
+    public static PendingReward takePendingRewards(String playerName) {
+        return DataContainer.storage == null
+                ? new PendingReward(Collections.emptyList(), Collections.emptyList())
+                : DataContainer.storage.takePendingRewards(playerName);
     }
 }
