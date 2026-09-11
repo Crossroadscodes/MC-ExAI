@@ -80,7 +80,7 @@ public class PlayerListener implements Listener {
             // 发放离线期间累计的知识采纳奖励
             RewardManager.deliverQueued(player);
             // 提醒审核员有多少待审核知识
-            if (player.hasPermission(Config.opPermission)) {
+            if (Config.hasOpPermission(player)) {
                 int pending = KnowledgeQueue.getTotalCount();
                 if (pending > 0) {
                     player.sendMessage(Lang.get("chat.reviewer-login-notify", Config.assistantName, pending));

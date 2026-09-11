@@ -24,7 +24,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DashScopeEmbedding {
     /** 嵌入缓存文件魔数("EXAI")与版本，用于校验文件归属并在格式变化时失效旧缓存。 */
     private static final int CACHE_MAGIC = 0x45584149;
-    private static final int CACHE_VERSION = 1;
+    private static final int CACHE_VERSION = 2;
+    public static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    public static final String DEFAULT_MODEL = "text-embedding-v3";
+    public static final int DEFAULT_DIMENSIONS = 1024;
     /** 嵌入缓存存放的专用子目录与文件名（plugins/ExAI/cache/embeddings.cache）。 */
     public static final String CACHE_DIR_NAME = "cache";
     public static final String CACHE_FILE_NAME = "embeddings.cache";
@@ -42,12 +45,26 @@ public class DashScopeEmbedding {
     }
 
     public DashScopeEmbedding(String apiKey, File cacheFile) {
+        this(apiKey, DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_DIMENSIONS, cacheFile);
+    }
+
+    public DashScopeEmbedding(String apiKey, String baseUrl, String model, int dimensions) {
+        this(apiKey, baseUrl, model, dimensions, defaultCacheFile());
+    }
+
+    public DashScopeEmbedding(String apiKey, String baseUrl, String model, int dimensions, File cacheFile) {
         this.apiKey = apiKey;
-        this.baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-        this.model = "text-embedding-v3";
-        this.dimensions = 1024;
+        this.baseUrl = stripTrailingSlash(baseUrl == null || baseUrl.trim().isEmpty() ? DEFAULT_BASE_URL : baseUrl);
+        this.model = model == null || model.trim().isEmpty() ? DEFAULT_MODEL : model.trim();
+        this.dimensions = dimensions > 0 ? dimensions : DEFAULT_DIMENSIONS;
         this.cacheFile = cacheFile;
         loadCache();
+    }
+
+    private static String stripTrailingSlash(String url) {
+        String result = url.trim();
+        while (result.endsWith("/")) result = result.substring(0, result.length() - 1);
+        return result;
     }
 
     private static File defaultCacheFile() {
@@ -163,8 +180,9 @@ public class DashScopeEmbedding {
                 return; // 非本插件文件或版本不符 → 忽略，后续重建
             }
             String fileModel = readString(in);
+            String fileBaseUrl = readString(in);
             int fileDim = in.readInt();
-            if (!model.equals(fileModel) || fileDim != dimensions) {
+            if (!model.equals(fileModel) || !baseUrl.equals(fileBaseUrl) || fileDim != dimensions) {
                 return; // 模型或维度变化 → 旧向量不可用，忽略后重建
             }
             int count = in.readInt();
@@ -208,6 +226,7 @@ public class DashScopeEmbedding {
                 out.writeInt(CACHE_MAGIC);
                 out.writeInt(CACHE_VERSION);
                 writeString(out, model);
+                writeString(out, baseUrl);
                 out.writeInt(dimensions);
                 out.writeInt(valid.size());
                 for (String key : valid) {

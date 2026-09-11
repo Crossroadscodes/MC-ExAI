@@ -7,3 +7,7 @@ commands:
   exai:
     description: ExAI插件主命令
     usage: /exai <reload|opengui|question|import|help>
+permissions:
+  exai.op:
+    description: Allows access to ExAI review/admin features
+    default: op

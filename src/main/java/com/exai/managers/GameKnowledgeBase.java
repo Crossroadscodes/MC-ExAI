@@ -5,6 +5,7 @@ import com.exai.embedding.DashScopeEmbedding;
 import com.exai.embedding.VectorStore;
 import com.exai.entity.GameDocument;
 import com.exai.i18n.Lang;
+import com.exai.manager.PluginDescriptionManager;
 import org.bukkit.Bukkit;
 
 import java.util.ArrayList;
@@ -30,6 +31,8 @@ public class GameKnowledgeBase {
     public void initializeKnowledgeBase() {
         Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> {
             List<GameDocument> documents = dataLoader.loadGameData();
+            // 把「已启用且有描述」的插件描述作为额外文档一起纳入向量库
+            documents.addAll(PluginDescriptionManager.buildDocuments());
             List<String> contents = new ArrayList<>(documents.size());
             // addDocument 内部会生成并写入嵌入(命中缓存则不调接口)，此处不再重复生成
             documents.forEach(doc -> {

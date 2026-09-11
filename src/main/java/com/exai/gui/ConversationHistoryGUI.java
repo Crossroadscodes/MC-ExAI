@@ -37,7 +37,7 @@ public class ConversationHistoryGUI {
     }
 
     public static void open(Player player) {
-        if (!player.hasPermission(Config.opPermission)) {
+        if (!Config.hasOpPermission(player)) {
             player.sendMessage(Lang.get("gui.review-no-permission"));
             return;
         }

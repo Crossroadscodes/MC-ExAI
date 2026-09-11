@@ -1,6 +1,6 @@
 # ExAI - Minecraft 智能助手插件
 
-[![Version](https://img.shields.io/badge/version-1.0.3-blue)](https://github.com/Crossroadscodes/MC-ExAI)
+[![Version](https://img.shields.io/badge/version-1.0.5-blue)](https://github.com/Crossroadscodes/MC-ExAI)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **Languages / 语言**: [简体中文](README.md) · [English](README_EN.md)

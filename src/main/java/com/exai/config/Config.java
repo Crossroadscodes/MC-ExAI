@@ -7,6 +7,7 @@ import com.exai.embedding.VectorStore;
 import com.exai.generators.AnswerGenerator;
 import com.exai.i18n.Lang;
 import com.exai.listener.PlayerListener;
+import com.exai.manager.KnowledgeFileManager;
 import com.exai.managers.GameDataLoader;
 import com.exai.managers.GameKnowledgeBase;
 import com.exai.service.LLMService;
@@ -14,6 +15,8 @@ import com.exai.service.KnowledgeReviewService;
 import com.exai.command.Commands;
 import com.exai.storage.MysqlStorage;
 import com.exai.storage.YamlStorage;
+import com.exai.web.WebServer;
+import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -30,6 +33,10 @@ public class Config {
     public static String username;
     public static String password;
     public static String llmBaseUrl;
+    public static String embeddingBaseUrl;
+    public static String embeddingApiKey;
+    public static String embeddingModel;
+    public static int embeddingDimensions;
     public static String llmModel;
     public static double llmTemperature;
     public static double minSimilarity;
@@ -61,6 +68,9 @@ public class Config {
     // 图片导入用的视觉模型（为空则不支持图片导入）；复用 llm 的 apiKey/baseUrl
     public static String documentImportVisionModel;
     public static LLMService visionLlm;
+    // 网页管理服务（仅本机访问）
+    public static boolean webuiEnabled;
+    public static int webuiPort;
 
     public static void loadAll() {
         try {
@@ -89,12 +99,19 @@ public class Config {
                 ExAI.getInstance().getLogger().info(Lang.get("log.storage-mode-mysql"));
             }
             DataContainer.storage.initialize();
+            // 完整重载：让知识库缓存失效，下次读取从当前存储（文件/DB）重新加载
+            KnowledgeFileManager.invalidateCache();
 
             ExAI.getInstance().getCommand("exai").setExecutor(new Commands());
             ExAI.getInstance().getCommand("exai").setTabCompleter(new Commands());
             String apiKey = config.getString("llm.apiKey");
             llmBaseUrl = config.getString("llm.baseUrl");
             llmModel = config.getString("llm.model");
+            embeddingBaseUrl = config.getString("embedding.baseUrl", DashScopeEmbedding.DEFAULT_BASE_URL);
+            embeddingApiKey = config.getString("embedding.apiKey", "").trim();
+            if (embeddingApiKey.isEmpty()) embeddingApiKey = apiKey;
+            embeddingModel = config.getString("embedding.model", DashScopeEmbedding.DEFAULT_MODEL);
+            embeddingDimensions = config.getInt("embedding.dimensions", DashScopeEmbedding.DEFAULT_DIMENSIONS);
             llmTemperature = config.getDouble("llm.temperature", 0.3);
             chatKeywords = config.getString("llm.chatKeywords", "吗,呢,什么,怎么,如何,为什么,？,?");
             chatResponseCD = config.getInt("llm.chatResponseCD", 60);
@@ -118,7 +135,10 @@ public class Config {
             documentImportTemperature = config.getDouble("knowledge.documentImport.temperature", 0.3);
             documentImportVisionModel = config.getString("knowledge.documentImport.visionModel", "").trim();
             assistantName = config.getString("assistant.name", "ExAI");
-            DashScopeEmbedding embeddingService = new DashScopeEmbedding(apiKey);
+            webuiEnabled = config.getBoolean("webui.enabled", false);
+            webuiPort = config.getInt("webui.port", 8080);
+            DashScopeEmbedding embeddingService = new DashScopeEmbedding(
+                    embeddingApiKey, embeddingBaseUrl, embeddingModel, embeddingDimensions);
             VectorStore vectorStore = new VectorStore(embeddingService);
             GameDataLoader dataLoader = new GameDataLoader();
             knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
@@ -130,6 +150,7 @@ public class Config {
             generator = new AnswerGenerator(llm);
             reviewer = new KnowledgeReviewService(llm);
             PlayerListener.registerIfNeeded(ExAI.getInstance());
+            WebServer.apply();
             ExAI.getInstance().getLogger().info(Lang.get("log.enable-success"));
         } catch (Exception e) {
             ExAI.getInstance().getLogger().info(Lang.get("log.enable-fail"));
@@ -142,10 +163,22 @@ public class Config {
         ExAI.getInstance().reloadConfig();
     }
 
+    /**
+     * 管理权限判定：OP 始终拥有管理权限，同时兼容权限插件对自定义节点的授权。
+     */
+    public static boolean hasOpPermission(CommandSender sender) {
+        return sender.isOp() || sender.hasPermission(opPermission);
+    }
+
     public static void reloadKnowledgeBaseOnly() {
         try {
             String apiKey = config.getString("llm.apiKey");
-            DashScopeEmbedding embeddingService = new DashScopeEmbedding(apiKey);
+            String baseUrl = config.getString("embedding.baseUrl", DashScopeEmbedding.DEFAULT_BASE_URL);
+            String embeddingKey = config.getString("embedding.apiKey", "").trim();
+            if (embeddingKey.isEmpty()) embeddingKey = apiKey;
+            String model = config.getString("embedding.model", DashScopeEmbedding.DEFAULT_MODEL);
+            int dimensions = config.getInt("embedding.dimensions", DashScopeEmbedding.DEFAULT_DIMENSIONS);
+            DashScopeEmbedding embeddingService = new DashScopeEmbedding(embeddingKey, baseUrl, model, dimensions);
             VectorStore vectorStore = new VectorStore(embeddingService);
             GameDataLoader dataLoader = new GameDataLoader();
             knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);

@@ -33,7 +33,7 @@ public class KnowledgeReviewGUI {
     private static Economy economy = null;
 
     public static void open(Player player) {
-        if (!player.hasPermission(Config.opPermission)) {
+        if (!Config.hasOpPermission(player)) {
             player.sendMessage(Lang.get("gui.review-no-permission"));
             return;
         }

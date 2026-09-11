@@ -6,6 +6,7 @@ import com.exai.data.KnowledgeQueue;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.LogEntry;
 import com.exai.entity.PendingReward;
+import com.exai.entity.PluginDescriptionEntry;
 import com.exai.i18n.Lang;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -325,5 +326,26 @@ public class YamlStorage implements DataStorage {
             saveQuietly(rewardConf, rewardFile);
             return new PendingReward(items, messages);
         }
+    }
+
+    @Override
+    public List<KnowledgeEntry> readKnowledge() {
+        // yml 模式下运行时知识库直接读文件，不经过存储层
+        throw new UnsupportedOperationException("当前为 yml 存储模式，知识库读写走本地文件");
+    }
+
+    @Override
+    public void writeKnowledge(List<KnowledgeEntry> entries) {
+        throw new UnsupportedOperationException("当前为 yml 存储模式，知识库读写走本地文件");
+    }
+
+    @Override
+    public void exportKnowledge(List<KnowledgeEntry> entries) {
+        throw new UnsupportedOperationException("当前为 yml 存储模式，无需/无法导出到数据库；请先在配置中切到 mysql 存储");
+    }
+
+    @Override
+    public void exportPluginDescriptions(List<PluginDescriptionEntry> entries) {
+        throw new UnsupportedOperationException("当前为 yml 存储模式，无需/无法导出到数据库；请先在配置中切到 mysql 存储");
     }
 }

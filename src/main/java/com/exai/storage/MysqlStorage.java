@@ -6,6 +6,7 @@ import com.exai.data.KnowledgeQueue;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.LogEntry;
 import com.exai.entity.PendingReward;
+import com.exai.entity.PluginDescriptionEntry;
 import com.exai.i18n.Lang;
 import com.exai.mysql.MySQL;
 
@@ -48,7 +49,13 @@ public class MysqlStorage implements DataStorage {
         try (Connection connection = sql.getConnection();
              Statement statement = connection.createStatement()) {
 
-            statement.executeUpdate("CREATE TABLE IF NOT EXISTS ex_ai_log (" +
+            // 旧前缀 ex_* 平滑迁移到 exai_*（仅当旧表存在且新表不存在时改名）
+            renameLegacyTable(connection, "ex_ai_log", "exai_log");
+            renameLegacyTable(connection, "ex_pending_knowledge_count", "exai_pending_knowledge_count");
+            renameLegacyTable(connection, "ex_pending_knowledge", "exai_pending_knowledge");
+            renameLegacyTable(connection, "ex_pending_reward", "exai_pending_reward");
+
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS exai_log (" +
                     "id INT AUTO_INCREMENT PRIMARY KEY, " +
                     "player_name VARCHAR(32) NOT NULL, " +
                     "player_input TEXT NOT NULL, " +
@@ -59,7 +66,7 @@ public class MysqlStorage implements DataStorage {
                     ")");
             System.out.println(Lang.get("log.log-table-ok"));
 
-            statement.executeUpdate("CREATE TABLE IF NOT EXISTS ex_pending_knowledge_count (" +
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS exai_pending_knowledge_count (" +
                     "player_uuid VARCHAR(36) PRIMARY KEY, " +
                     "player_name VARCHAR(32) NOT NULL, " +
                     "pending_count INT DEFAULT 0, " +
@@ -67,7 +74,7 @@ public class MysqlStorage implements DataStorage {
                     ")");
             System.out.println(Lang.get("log.pending-count-table-ok"));
 
-            statement.executeUpdate("CREATE TABLE IF NOT EXISTS ex_pending_knowledge (" +
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS exai_pending_knowledge (" +
                     "id INT AUTO_INCREMENT PRIMARY KEY, " +
                     "question TEXT NOT NULL, " +
                     "answer TEXT NOT NULL, " +
@@ -78,11 +85,11 @@ public class MysqlStorage implements DataStorage {
                     "create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                     ")");
             // 兼容旧版本：为已存在的表补充新列
-            addColumnIfMissing(connection, "ex_pending_knowledge", "source", "VARCHAR(32) DEFAULT 'player'");
-            addColumnIfMissing(connection, "ex_pending_knowledge", "thanked", "TINYINT(1) DEFAULT 0");
+            addColumnIfMissing(connection, "exai_pending_knowledge", "source", "VARCHAR(32) DEFAULT 'player'");
+            addColumnIfMissing(connection, "exai_pending_knowledge", "thanked", "TINYINT(1) DEFAULT 0");
             System.out.println(Lang.get("log.pending-knowledge-table-ok"));
 
-            statement.executeUpdate("CREATE TABLE IF NOT EXISTS ex_pending_reward (" +
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS exai_pending_reward (" +
                     "id INT AUTO_INCREMENT PRIMARY KEY, " +
                     "player_name VARCHAR(32) NOT NULL, " +
                     "item VARCHAR(64), " +
@@ -92,9 +99,124 @@ public class MysqlStorage implements DataStorage {
                     ")");
             System.out.println(Lang.get("log.pending-reward-table-ok"));
 
+            // 本地知识库 / 插件描述的导出目标表（不参与运行读路径）
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS exai_knowledge (" +
+                    "id INT AUTO_INCREMENT PRIMARY KEY, " +
+                    "question TEXT NOT NULL, " +
+                    "answer TEXT NOT NULL, " +
+                    "submitter VARCHAR(64), " +
+                    "ts BIGINT, " +
+                    "source VARCHAR(32)" +
+                    ")");
+
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS exai_plugin_desc (" +
+                    "id INT AUTO_INCREMENT PRIMARY KEY, " +
+                    "name VARCHAR(64) NOT NULL, " +
+                    "version VARCHAR(32), " +
+                    "enabled TINYINT(1) DEFAULT 1, " +
+                    "description TEXT" +
+                    ")");
+
         } catch (SQLException e) {
             System.err.println("Failed to create table: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    private void renameLegacyTable(Connection connection, String oldName, String newName) {
+        try {
+            if (tableExists(connection, oldName) && !tableExists(connection, newName)) {
+                try (Statement st = connection.createStatement()) {
+                    st.executeUpdate("RENAME TABLE " + oldName + " TO " + newName);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Failed to rename table " + oldName + " -> " + newName + ": " + e.getMessage());
+        }
+    }
+
+    private boolean tableExists(Connection connection, String table) throws SQLException {
+        DatabaseMetaData meta = connection.getMetaData();
+        try (ResultSet rs = meta.getTables(connection.getCatalog(), null, table, new String[]{"TABLE"})) {
+            return rs.next();
+        }
+    }
+
+    @Override
+    public List<KnowledgeEntry> readKnowledge() {
+        List<KnowledgeEntry> list = new ArrayList<>();
+        String querySQL = "SELECT question, answer, submitter, ts, source FROM exai_knowledge ORDER BY id";
+        try (Connection connection = sql.getConnection();
+             PreparedStatement pstmt = connection.prepareStatement(querySQL);
+             ResultSet rs = pstmt.executeQuery()) {
+            while (rs.next()) {
+                String submitter = rs.getString("submitter");
+                long ts = rs.getLong("ts");
+                KnowledgeEntry entry = new KnowledgeEntry(
+                        rs.getString("question"),
+                        rs.getString("answer"),
+                        submitter == null ? "" : submitter,
+                        ts);
+                String source = rs.getString("source");
+                if (source != null) {
+                    entry.setSource(source);
+                }
+                list.add(entry);
+            }
+        } catch (SQLException e) {
+            System.err.println("Failed to read knowledge from db: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return list;
+    }
+
+    @Override
+    public void writeKnowledge(List<KnowledgeEntry> entries) {
+        try (Connection connection = sql.getConnection()) {
+            try (Statement st = connection.createStatement()) {
+                st.executeUpdate("TRUNCATE TABLE exai_knowledge");
+            }
+            String insertSQL = "INSERT INTO exai_knowledge (question, answer, submitter, ts, source) VALUES (?, ?, ?, ?, ?)";
+            try (PreparedStatement pstmt = connection.prepareStatement(insertSQL)) {
+                for (KnowledgeEntry e : entries) {
+                    pstmt.setString(1, e.getQuestion());
+                    pstmt.setString(2, e.getAnswer());
+                    pstmt.setString(3, e.getSubmitter());
+                    pstmt.setLong(4, e.getTimestamp());
+                    pstmt.setString(5, e.getSource());
+                    pstmt.addBatch();
+                }
+                pstmt.executeBatch();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("写入知识库到数据库失败: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public void exportKnowledge(List<KnowledgeEntry> entries) {
+        writeKnowledge(entries);
+    }
+
+    @Override
+    public void exportPluginDescriptions(List<PluginDescriptionEntry> entries) {
+        try (Connection connection = sql.getConnection()) {
+            try (Statement st = connection.createStatement()) {
+                st.executeUpdate("TRUNCATE TABLE exai_plugin_desc");
+            }
+            String insertSQL = "INSERT INTO exai_plugin_desc (name, version, enabled, description) VALUES (?, ?, ?, ?)";
+            try (PreparedStatement pstmt = connection.prepareStatement(insertSQL)) {
+                for (PluginDescriptionEntry e : entries) {
+                    pstmt.setString(1, e.getName());
+                    pstmt.setString(2, e.getVersion());
+                    pstmt.setBoolean(3, e.isEnabled());
+                    pstmt.setString(4, e.getDescription());
+                    pstmt.addBatch();
+                }
+                pstmt.executeBatch();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("导出插件描述到数据库失败: " + e.getMessage(), e);
         }
     }
 
@@ -116,7 +238,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public int getPendingCount(String uuid) {
-        String querySQL = "SELECT pending_count FROM ex_pending_knowledge_count WHERE player_uuid = ?";
+        String querySQL = "SELECT pending_count FROM exai_pending_knowledge_count WHERE player_uuid = ?";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL)) {
             pstmt.setString(1, uuid);
@@ -133,7 +255,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public void addPendingCount(String uuid, String playerName) {
-        String updateSQL = "INSERT INTO ex_pending_knowledge_count (player_uuid, player_name, pending_count) " +
+        String updateSQL = "INSERT INTO exai_pending_knowledge_count (player_uuid, player_name, pending_count) " +
                 "VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE pending_count = pending_count + 1, player_name = ?";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(updateSQL)) {
@@ -149,7 +271,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public void subPendingCount(String uuid) {
-        String updateSQL = "UPDATE ex_pending_knowledge_count SET pending_count = GREATEST(pending_count - 1, 0) WHERE player_uuid = ?";
+        String updateSQL = "UPDATE exai_pending_knowledge_count SET pending_count = GREATEST(pending_count - 1, 0) WHERE player_uuid = ?";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(updateSQL)) {
             pstmt.setString(1, uuid);
@@ -162,7 +284,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public int insertPendingKnowledge(KnowledgeEntry entry) {
-        String insertSQL = "INSERT INTO ex_pending_knowledge (question, answer, submitter, timestamp, source, thanked) VALUES (?, ?, ?, ?, ?, ?)";
+        String insertSQL = "INSERT INTO exai_pending_knowledge (question, answer, submitter, timestamp, source, thanked) VALUES (?, ?, ?, ?, ?, ?)";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(insertSQL, Statement.RETURN_GENERATED_KEYS)) {
             pstmt.setString(1, entry.getQuestion());
@@ -185,7 +307,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public void deletePendingKnowledge(int id) {
-        String deleteSQL = "DELETE FROM ex_pending_knowledge WHERE id = ?";
+        String deleteSQL = "DELETE FROM exai_pending_knowledge WHERE id = ?";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(deleteSQL)) {
             pstmt.setInt(1, id);
@@ -199,7 +321,7 @@ public class MysqlStorage implements DataStorage {
     @Override
     public void loadAllPendingKnowledge() {
         KnowledgeQueue.clearAll();
-        String querySQL = "SELECT id, question, answer, submitter, timestamp, source, thanked FROM ex_pending_knowledge";
+        String querySQL = "SELECT id, question, answer, submitter, timestamp, source, thanked FROM exai_pending_knowledge";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL);
              ResultSet rs = pstmt.executeQuery()) {
@@ -227,7 +349,7 @@ public class MysqlStorage implements DataStorage {
     private void rebuildMemoryState() {
         DataContainer.playerPendingKnowledgeCount.clear();
         DataContainer.submitterToUuid.clear();
-        String countQuerySQL = "SELECT player_uuid, player_name, pending_count FROM ex_pending_knowledge_count";
+        String countQuerySQL = "SELECT player_uuid, player_name, pending_count FROM exai_pending_knowledge_count";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(countQuerySQL);
              ResultSet rs = pstmt.executeQuery()) {
@@ -247,7 +369,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public boolean isPendingKnowledgeDuplicate(String question) {
-        String querySQL = "SELECT COUNT(*) FROM ex_pending_knowledge WHERE question = ?";
+        String querySQL = "SELECT COUNT(*) FROM exai_pending_knowledge WHERE question = ?";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL)) {
             pstmt.setString(1, question);
@@ -265,7 +387,7 @@ public class MysqlStorage implements DataStorage {
     @Override
     public void insertLog(String playerName, String playerInput, String aiResponse,
                           String documentId, String source) {
-        String insertSQL = "INSERT INTO ex_ai_log (player_name, player_input, ai_response, document_id, source) " +
+        String insertSQL = "INSERT INTO exai_log (player_name, player_input, ai_response, document_id, source) " +
                 "VALUES (?, ?, ?, ?, ?)";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(insertSQL)) {
@@ -283,7 +405,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public int getLogTotalCount() {
-        String querySQL = "SELECT COUNT(*) FROM ex_ai_log";
+        String querySQL = "SELECT COUNT(*) FROM exai_log";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL);
              ResultSet rs = pstmt.executeQuery()) {
@@ -301,7 +423,7 @@ public class MysqlStorage implements DataStorage {
     public List<LogEntry> getLogPage(int page, int pageSize) {
         List<LogEntry> list = new ArrayList<>();
         String querySQL = "SELECT id, player_name, player_input, ai_response, document_id, source, create_time " +
-                "FROM ex_ai_log ORDER BY id DESC LIMIT ? OFFSET ?";
+                "FROM exai_log ORDER BY id DESC LIMIT ? OFFSET ?";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL)) {
             pstmt.setInt(1, pageSize);
@@ -329,7 +451,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public void deleteLog(int id) {
-        String deleteSQL = "DELETE FROM ex_ai_log WHERE id = ?";
+        String deleteSQL = "DELETE FROM exai_log WHERE id = ?";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(deleteSQL)) {
             pstmt.setInt(1, id);
@@ -342,7 +464,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public void addPendingRewards(String playerName, List<String> items, List<String> messages) {
-        String insertSQL = "INSERT INTO ex_pending_reward (player_name, item, message) VALUES (?, ?, ?)";
+        String insertSQL = "INSERT INTO exai_pending_reward (player_name, item, message) VALUES (?, ?, ?)";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(insertSQL)) {
             if (items != null) {
@@ -373,7 +495,7 @@ public class MysqlStorage implements DataStorage {
         List<String> items = new ArrayList<>();
         List<String> messages = new ArrayList<>();
         List<Integer> ids = new ArrayList<>();
-        String querySQL = "SELECT id, item, message FROM ex_pending_reward WHERE player_name = ? ORDER BY id";
+        String querySQL = "SELECT id, item, message FROM exai_pending_reward WHERE player_name = ? ORDER BY id";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL)) {
             pstmt.setString(1, playerName);
@@ -392,7 +514,7 @@ public class MysqlStorage implements DataStorage {
             }
             // 仅删除本次读到的行，避免删掉读取期间新插入的奖励
             if (!ids.isEmpty()) {
-                StringBuilder deleteSQL = new StringBuilder("DELETE FROM ex_pending_reward WHERE id IN (");
+                StringBuilder deleteSQL = new StringBuilder("DELETE FROM exai_pending_reward WHERE id IN (");
                 for (int i = 0; i < ids.size(); i++) {
                     deleteSQL.append(i == 0 ? "?" : ",?");
                 }

@@ -12,14 +12,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public class GameDataLoader {
-    private int chunkSize = 5;
+    private static final int ENTRIES_PER_CHUNK = 3;
     private boolean debugMode = false;
 
     public GameDataLoader() {
-    }
-
-    public GameDataLoader(int chunkSize) {
-        this.chunkSize = chunkSize;
     }
 
     public List<GameDocument> loadGameData() {
@@ -79,41 +75,33 @@ public class GameDataLoader {
 
     private List<GameDocument> loadFromKnowledgeFile() {
         List<KnowledgeEntry> entries = KnowledgeFileManager.readAll();
-        String qPrefix = Lang.get("book.pattern-prefix-q");
-        String aPrefix = Lang.get("book.pattern-prefix-a");
-        List<String> lines = new ArrayList<>(entries.size() * 2);
-        for (KnowledgeEntry e : entries) {
-            lines.add(qPrefix + e.getQuestion());
-            lines.add(aPrefix + e.getAnswer());
-        }
-        return createChunksFromLines(lines);
+        return createChunksFromEntries(entries);
     }
 
-    private List<GameDocument> createChunksFromLines(List<String> lines) {
+    /**
+     * Each vector document contains three complete Q&A entries, never a partial entry.
+     */
+    private List<GameDocument> createChunksFromEntries(List<KnowledgeEntry> entries) {
         List<GameDocument> chunks = new ArrayList<>();
 
-        if (lines.isEmpty()) {
+        if (entries.isEmpty()) {
             return chunks;
         }
 
-        if (chunkSize <= 0) {
-            chunkSize = 1;
-        }
-
-        int chunkCount = (int) Math.ceil((double) lines.size() / chunkSize);
+        int chunkCount = (int) Math.ceil((double) entries.size() / ENTRIES_PER_CHUNK);
 
         for (int i = 0; i < chunkCount; i++) {
-            int start = i * chunkSize;
-            int end = Math.min(start + chunkSize, lines.size());
+            int start = i * ENTRIES_PER_CHUNK;
+            int end = Math.min(start + ENTRIES_PER_CHUNK, entries.size());
 
-            List<String> chunkLines = lines.subList(start, end);
-            String chunkText = mergeLinesToText(chunkLines);
+            List<KnowledgeEntry> chunkEntries = entries.subList(start, end);
+            String chunkText = mergeEntriesToText(chunkEntries);
 
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("chunk_id", i + 1);
-            metadata.put("chunk_size", chunkLines.size());
-            metadata.put("line_range", start + "-" + (end - 1));
-            metadata.put("total_lines", lines.size());
+            metadata.put("chunk_size", chunkEntries.size());
+            metadata.put("entry_range", (start + 1) + "-" + end);
+            metadata.put("total_entries", entries.size());
 
             GameDocument chunk = new GameDocument(
                     "chunk_" + String.format("%04d", i + 1),
@@ -133,13 +121,17 @@ public class GameDataLoader {
         return chunks;
     }
 
-    private String mergeLinesToText(List<String> lines) {
+    private String mergeEntriesToText(List<KnowledgeEntry> entries) {
         StringBuilder sb = new StringBuilder();
-        for (String line : lines) {
+        String qPrefix = Lang.get("book.pattern-prefix-q");
+        String aPrefix = Lang.get("book.pattern-prefix-a");
+        for (KnowledgeEntry entry : entries) {
             if (sb.length() > 0) {
                 sb.append(". ");
             }
-            sb.append(line);
+            sb.append(qPrefix).append(entry.getQuestion());
+            sb.append(". ");
+            sb.append(aPrefix).append(entry.getAnswer());
         }
         return sb.toString();
     }

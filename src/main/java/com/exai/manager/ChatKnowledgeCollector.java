@@ -166,7 +166,7 @@ public class ChatKnowledgeCollector {
         String msg = Lang.get("chat.auto-collect-notify", Config.assistantName);
         Bukkit.getScheduler().runTask(ExAI.getInstance(), () -> {
             for (Player online : Bukkit.getOnlinePlayers()) {
-                if (online.hasPermission(Config.opPermission)) {
+                if (Config.hasOpPermission(online)) {
                     online.sendMessage(msg);
                 }
             }

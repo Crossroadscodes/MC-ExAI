@@ -2,10 +2,12 @@ package com.exai.gui;
 
 import com.exai.config.Config;
 import com.exai.entity.KnowledgeEntry;
+import com.exai.entity.PluginDescriptionEntry;
 import com.exai.i18n.Lang;
 import com.exai.manager.EditContextManager;
 import com.exai.manager.KnowledgeFileManager;
 import com.exai.manager.KnowledgeManager;
+import com.exai.manager.PluginDescriptionManager;
 import com.exai.utils.MaterialCompat;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -25,59 +27,123 @@ import java.util.UUID;
 public class KnowledgeBaseGUI {
     private static final int GUI_SIZE = 45;
     private static final int PAGE_SIZE = 36;
+    private static final int SLOT_CATEGORY = 36;
     private static final int SLOT_PREV = 38;
     private static final int SLOT_PAGE_INFO = 40;
     private static final int SLOT_NEXT = 42;
     private static final int SLOT_CLOSE = 44;
+    private static final String CAT_KNOWLEDGE = "knowledge";
+    private static final String CAT_PLUGIN = "plugin";
     private static final Map<UUID, Integer> currentPages = new HashMap<>();
     private static final Map<UUID, List<KnowledgeEntry>> currentPageEntries = new HashMap<>();
     private static final Map<UUID, List<Integer>> currentPageIndices = new HashMap<>();
+    private static final Map<UUID, List<PluginDescriptionEntry>> currentPagePlugins = new HashMap<>();
+    private static final Map<UUID, String> currentCategory = new HashMap<>();
+
+    private static List<PluginDescriptionEntry> describedPlugins() {
+        List<PluginDescriptionEntry> out = new ArrayList<>();
+        for (PluginDescriptionEntry e : PluginDescriptionManager.readAll()) {
+            if (e.getDescription() != null && !e.getDescription().trim().isEmpty()) {
+                out.add(e);
+            }
+        }
+        return out;
+    }
 
     public static String getGUI_TITLE() {
         return Lang.get("gui.kb-title", Config.assistantName);
     }
 
     public static void open(Player player) {
-        if (!player.hasPermission(Config.opPermission)) {
+        if (!Config.hasOpPermission(player)) {
             player.sendMessage(Lang.get("gui.review-no-permission"));
             return;
         }
+        currentCategory.put(player.getUniqueId(), CAT_KNOWLEDGE);
         currentPages.put(player.getUniqueId(), 0);
         showPage(player, 0);
     }
 
+    /** 在「知识 / 插件描述」两类之间切换并回到第 0 页。 */
+    public static void toggleCategory(Player player) {
+        UUID uuid = player.getUniqueId();
+        String cat = currentCategory.getOrDefault(uuid, CAT_KNOWLEDGE);
+        currentCategory.put(uuid, CAT_PLUGIN.equals(cat) ? CAT_KNOWLEDGE : CAT_PLUGIN);
+        showPage(player, 0);
+    }
+
     private static void showPage(Player player, int page) {
-        List<KnowledgeEntry> all = KnowledgeFileManager.readAll();
-        int total = all.size();
-        int totalPages = (int) Math.ceil((double) total / PAGE_SIZE);
-        if (totalPages == 0) totalPages = 1;
-        if (page >= totalPages) page = totalPages - 1;
-        if (page < 0) page = 0;
-
-        int start = page * PAGE_SIZE;
-        int end = Math.min(start + PAGE_SIZE, total);
-        List<KnowledgeEntry> entries = start < total ? new ArrayList<>(all.subList(start, end)) : new ArrayList<>();
-        List<Integer> indices = new ArrayList<>();
-        for (int i = start; i < end; i++) indices.add(i);
-
-        currentPageEntries.put(player.getUniqueId(), entries);
-        currentPageIndices.put(player.getUniqueId(), indices);
-        currentPages.put(player.getUniqueId(), page);
-
+        UUID uuid = player.getUniqueId();
+        String cat = currentCategory.getOrDefault(uuid, CAT_KNOWLEDGE);
         Inventory inventory = Bukkit.createInventory(null, GUI_SIZE, getGUI_TITLE());
 
-        for (int i = 0; i < PAGE_SIZE; i++) {
-            if (i < entries.size()) {
+        int total;
+        int totalPages;
+        if (CAT_PLUGIN.equals(cat)) {
+            List<PluginDescriptionEntry> all = describedPlugins();
+            total = all.size();
+            totalPages = Math.max(1, (int) Math.ceil((double) total / PAGE_SIZE));
+            if (page >= totalPages) page = totalPages - 1;
+            if (page < 0) page = 0;
+            int start = page * PAGE_SIZE;
+            int end = Math.min(start + PAGE_SIZE, total);
+            List<PluginDescriptionEntry> entries = start < total ? new ArrayList<>(all.subList(start, end)) : new ArrayList<>();
+            currentPagePlugins.put(uuid, entries);
+            for (int i = 0; i < entries.size(); i++) {
+                inventory.setItem(i, createPluginItem(entries.get(i)));
+            }
+        } else {
+            List<KnowledgeEntry> all = KnowledgeFileManager.readAll();
+            total = all.size();
+            totalPages = Math.max(1, (int) Math.ceil((double) total / PAGE_SIZE));
+            if (page >= totalPages) page = totalPages - 1;
+            if (page < 0) page = 0;
+            int start = page * PAGE_SIZE;
+            int end = Math.min(start + PAGE_SIZE, total);
+            List<KnowledgeEntry> entries = start < total ? new ArrayList<>(all.subList(start, end)) : new ArrayList<>();
+            List<Integer> indices = new ArrayList<>();
+            for (int i = start; i < end; i++) indices.add(i);
+            currentPageEntries.put(uuid, entries);
+            currentPageIndices.put(uuid, indices);
+            for (int i = 0; i < entries.size(); i++) {
                 inventory.setItem(i, createKbItem(entries.get(i), indices.get(i)));
             }
         }
+        currentPages.put(uuid, page);
 
+        inventory.setItem(SLOT_CATEGORY, createCategoryItem(cat));
         inventory.setItem(SLOT_PREV, createNavItem(Lang.get("gui.prev-page"), page > 0));
         inventory.setItem(SLOT_PAGE_INFO, createPageInfoItem(page + 1, totalPages, total));
         inventory.setItem(SLOT_NEXT, createNavItem(Lang.get("gui.next-page"), page < totalPages - 1));
         inventory.setItem(SLOT_CLOSE, createCloseItem());
 
         player.openInventory(inventory);
+    }
+
+    private static ItemStack createCategoryItem(String cat) {
+        ItemStack item = new ItemStack(Material.COMPASS);
+        ItemMeta meta = item.getItemMeta();
+        String label = CAT_PLUGIN.equals(cat) ? Lang.get("gui.kb-cat-plugin") : Lang.get("gui.kb-cat-knowledge");
+        meta.setDisplayName(Lang.get("gui.kb-category-button", label));
+        meta.setLore(Collections.singletonList(Lang.get("gui.kb-category-lore")));
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private static ItemStack createPluginItem(PluginDescriptionEntry entry) {
+        ItemStack item = new ItemStack(Material.PAPER);
+        ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName(Lang.get("gui.kb-plugin-item-title", entry.getName(), entry.getVersion()));
+        List<String> lore = new ArrayList<>();
+        lore.add(Lang.get("gui.kb-plugin-desc", truncate(entry.getDescription(), 30)));
+        if (!entry.isEnabled()) {
+            lore.add(Lang.get("gui.kb-plugin-disabled"));
+        }
+        lore.add("");
+        lore.add(Lang.get("gui.kb-shift-click"));
+        meta.setLore(lore);
+        item.setItemMeta(meta);
+        return item;
     }
 
     private static ItemStack createKbItem(KnowledgeEntry entry, int absoluteIndex) {
@@ -134,11 +200,16 @@ public class KnowledgeBaseGUI {
 
     public static void handleLeftClick(Player player, int slot, boolean shift) {
         UUID uuid = player.getUniqueId();
+        String cat = currentCategory.getOrDefault(uuid, CAT_KNOWLEDGE);
         int page = currentPages.getOrDefault(uuid, 0);
-        List<KnowledgeEntry> all = KnowledgeFileManager.readAll();
-        int total = all.size();
-        int totalPages = (int) Math.ceil((double) total / PAGE_SIZE);
-        if (totalPages == 0) totalPages = 1;
+
+        if (slot == SLOT_CATEGORY) {
+            toggleCategory(player);
+            return;
+        }
+
+        int total = CAT_PLUGIN.equals(cat) ? describedPlugins().size() : KnowledgeFileManager.readAll().size();
+        int totalPages = Math.max(1, (int) Math.ceil((double) total / PAGE_SIZE));
 
         if (slot == SLOT_PREV && page > 0) {
             showPage(player, page - 1);
@@ -153,27 +224,46 @@ public class KnowledgeBaseGUI {
             ChestGUI.open(player);
             return;
         }
-        if (slot >= 0 && slot < PAGE_SIZE) {
-            List<KnowledgeEntry> entries = currentPageEntries.get(uuid);
-            List<Integer> indices = currentPageIndices.get(uuid);
+        if (slot < 0 || slot >= PAGE_SIZE) {
+            return;
+        }
+
+        if (CAT_PLUGIN.equals(cat)) {
+            // 插件描述只读：任意左键打印完整描述
+            List<PluginDescriptionEntry> entries = currentPagePlugins.get(uuid);
             if (entries == null || slot >= entries.size()) return;
-            KnowledgeEntry entry = entries.get(slot);
-            int absIndex = indices.get(slot);
-            if (shift) {
-                player.closeInventory();
-                player.sendMessage(Lang.get("gui.divider"));
-                player.sendMessage(Lang.get("gui.kb-detail-title", absIndex + 1));
-                player.sendMessage(Lang.get("gui.knowledge-question", entry.getQuestion()));
-                player.sendMessage(Lang.get("gui.knowledge-answer", entry.getAnswer()));
-                player.sendMessage(Lang.get("gui.divider"));
-            } else {
-                openEditBook(player, entry, absIndex);
-            }
+            PluginDescriptionEntry e = entries.get(slot);
+            player.closeInventory();
+            player.sendMessage(Lang.get("gui.divider"));
+            player.sendMessage(Lang.get("gui.kb-plugin-item-title", e.getName(), e.getVersion()));
+            player.sendMessage(e.getDescription());
+            player.sendMessage(Lang.get("gui.divider"));
+            return;
+        }
+
+        List<KnowledgeEntry> entries = currentPageEntries.get(uuid);
+        List<Integer> indices = currentPageIndices.get(uuid);
+        if (entries == null || slot >= entries.size()) return;
+        KnowledgeEntry entry = entries.get(slot);
+        int absIndex = indices.get(slot);
+        if (shift) {
+            player.closeInventory();
+            player.sendMessage(Lang.get("gui.divider"));
+            player.sendMessage(Lang.get("gui.kb-detail-title", absIndex + 1));
+            player.sendMessage(Lang.get("gui.knowledge-question", entry.getQuestion()));
+            player.sendMessage(Lang.get("gui.knowledge-answer", entry.getAnswer()));
+            player.sendMessage(Lang.get("gui.divider"));
+        } else {
+            openEditBook(player, entry, absIndex);
         }
     }
 
     public static void handleRightClick(Player player, int slot) {
         UUID uuid = player.getUniqueId();
+        String cat = currentCategory.getOrDefault(uuid, CAT_KNOWLEDGE);
+        if (CAT_PLUGIN.equals(cat)) {
+            return; // 插件描述只读，删除请走网页
+        }
         int page = currentPages.getOrDefault(uuid, 0);
         if (slot >= 0 && slot < PAGE_SIZE) {
             List<KnowledgeEntry> entries = currentPageEntries.get(uuid);

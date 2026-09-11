@@ -14,6 +14,13 @@ storage-data:
   username: xx
   password: xx
 
+# 网页管理服务（仅本机访问）。
+# 启用后在服务器本机浏览器打开 http://127.0.0.1:<port> 即可可视化管理配置。
+# 修改 enabled / port 后执行 /exai reload(或在网页里保存) 即可生效，无需重启服务器。
+webui:
+  enabled: false
+  port: 8080
+
 # 大模型配置
 llm:
   baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -28,6 +35,14 @@ llm:
   chatResponseSuffix: "(可以通过菜单直接与我对话哦~，这个后缀可以修改成任意内容)"
 
 # 助手配置
+# Embedding / vector configuration. Leave apiKey empty to reuse llm.apiKey.
+# baseUrl must be an OpenAI-compatible v1 root; requests are sent to <baseUrl>/embeddings.
+embedding:
+  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  apiKey: ""
+  model: "text-embedding-v3"
+  dimensions: 1024
+
 assistant:
   name: "ExAI"
 
@@ -87,4 +102,3 @@ knowledge:
           amount: 1
         - material: APPLE
           amount: 5
-

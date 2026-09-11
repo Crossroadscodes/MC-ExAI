@@ -38,7 +38,7 @@ public class ChestGUI {
         inventory.setItem(SLOT_SUBMIT, createSubmitButton());
 
         // 仅拥有审核权限的管理员可见：审核、历史对话、知识库管理
-        if (player.hasPermission(Config.opPermission)) {
+        if (Config.hasOpPermission(player)) {
             inventory.setItem(SLOT_REVIEW, createReviewButton());
             inventory.setItem(SLOT_HISTORY, createHistoryButton());
             inventory.setItem(SLOT_KB, createKnowledgeBaseButton());

@@ -44,7 +44,12 @@ public class MaterialCompat {
     public static ItemStack steveHead() {
         Material head = Material.getMaterial("PLAYER_HEAD");
         if (head == null) {
-            head = Material.SKULL_ITEM;
+            // SKULL_ITEM was removed from the modern API; resolve it by name so
+            // this class can still be compiled against modern servers.
+            head = Material.getMaterial("SKULL_ITEM");
+            if (head == null) {
+                return new ItemStack(Material.AIR);
+            }
             ItemStack item = new ItemStack(head);
             item.setDurability((short) 3);
             return item;
