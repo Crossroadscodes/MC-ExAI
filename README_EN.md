@@ -1,6 +1,6 @@
 # ExAI — AI Assistant Plugin for Minecraft
 
-[![Version](https://img.shields.io/badge/version-1.0.3-blue)](https://github.com/Crossroadscodes/MC-ExAI)
+[![Version](https://img.shields.io/badge/version-1.0.5-blue)](https://github.com/Crossroadscodes/MC-ExAI)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **Languages / 语言**: [简体中文](README.md) · [English](README_EN.md)
@@ -28,7 +28,8 @@ ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports pu
 - Vector similarity matching for relevant documents
 - Category prediction (location / quest / item / skill / NPC / general)
 - Similarity threshold filtering to keep answer quality
-- Aliyun DashScope `text-embedding-v3` (1024-dim) embeddings
+- Knowledge is chunked as three complete Q&A pairs per vector document, preventing questions and answers from being split apart during retrieval
+- Configurable OpenAI-compatible Embedding endpoint, API key, model, and dimensions; defaults to DashScope `text-embedding-v3` (1024-dim)
 - **Reduced hallucination**: prompts strictly enforce "answer only from the knowledge base, otherwise refuse", with the strongest constraint placed last (recency effect)
 - Tunable answer `llm.temperature` (lower = stricter) and `knowledge.maxDocs` (fewer injected docs = less chance of stitching together a wrong answer)
 
@@ -61,6 +62,11 @@ ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports pu
 - Async writes, never blocks the main thread
 - Switch modes by editing `config.yml` only; no code changes required
 
+### 8. Web administration and CLI (testing)
+- Optional local-only web console for configuration and knowledge-base management
+- Web CLI provides plugin configuration tools, multi-turn sessions, history, and rewind support
+- **Testing status**: the Web CLI is still experimental. Validate it on a test server before using it in production.
+
 ---
 
 ## Installation
@@ -80,6 +86,8 @@ ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports pu
    - Pick `storage.type`: `yml` (default, no DB) or `mysql`
    - If `mysql`, fill in `storage-data` MySQL credentials
    - Set your **LLM API key** (`llm.apiKey`, default Aliyun DashScope)
+   - Configure `embedding` separately when your Embedding provider, API key, model, or dimensions differ from the chat LLM
+   - (Optional) Enable `webui.enabled` to access the local web console at `http://127.0.0.1:<port>`
 4. (Optional) Edit `plugins/ExAI/knowledge.yml` to seed the knowledge base
 5. Run `/exai reload`
 
@@ -102,6 +110,11 @@ storage-data:
   username: "username"
   password: "your-password"
 
+# ==================== Local web administration ====================
+webui:
+  enabled: false
+  port: 8080
+
 # ==================== LLM config ====================
 llm:
   baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -114,6 +127,15 @@ llm:
   chatResponseCD: 60          # cooldown in seconds
   chatResponseEnabled: true
   chatResponseSuffix: "(open the ESC menu to chat with me directly~)"
+
+# ==================== Embedding config ====================
+# Leave apiKey empty to reuse llm.apiKey.
+# baseUrl is an OpenAI-compatible v1 root; requests use <baseUrl>/embeddings.
+embedding:
+  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  apiKey: ""
+  model: "text-embedding-v3"
+  dimensions: 1024
 
 # ==================== Assistant ====================
 assistant:
