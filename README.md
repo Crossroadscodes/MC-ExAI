@@ -104,6 +104,15 @@ llm:
   chatResponseEnabled: true   # 是否启用公屏聊天回复
   chatResponseSuffix: "(可以通过ESC菜单直接与我对话哦~)"
 
+# ==================== Embedding / 向量配置 ====================
+# apiKey 留空时复用 llm.apiKey。
+# baseUrl 应为 OpenAI 兼容接口的 v1 根路径；实际请求地址为 <baseUrl>/embeddings。
+embedding:
+  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  apiKey: ""
+  model: "text-embedding-v3"
+  dimensions: 1024
+
 # ==================== 助手配置 ====================
 assistant:
   name: "ExAI"
