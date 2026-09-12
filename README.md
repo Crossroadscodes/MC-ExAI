@@ -91,6 +91,12 @@ storage-data:
   username: "username"
   password: "your-password"
 
+# ==================== Web 管理服务（仅本机访问） ====================
+# 启用后在服务器本机浏览器访问 http://127.0.0.1:<port>。
+webui:
+  enabled: false
+  port: 8080
+
 # ==================== 大模型配置 ====================
 llm:
   baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"

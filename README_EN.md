@@ -40,6 +40,8 @@ ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports pu
 - **AI pre-review** (`knowledge.playerSubmitReview`): submissions are first judged by the AI for fitness, filtering jokes / ads / off-topic / clearly wrong content; only passing ones enter the OP review queue
 - **Fail-closed**: if the AI service is unavailable, the submission is blocked with a "try again later" message — the knowledge base is never polluted
 - During async review the book is only consumed if it's still in the main hand, so other items can't be deleted by accident
+- Pending entries are reviewed in a paginated GUI, showing their source, answerer, and thanked state
+- Approvals write entries to the knowledge base and can issue Vault currency or custom-item rewards; rejections remove them from the queue
 
 ### 5. Auto knowledge collection 🆕
 - Watches the public-chat flow "player asks → someone answers → (asker thanks)" and harvests it into knowledge
@@ -49,20 +51,7 @@ ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports pu
 - Does not count against the per-player submission cap; online reviewers can be notified on new entries
 - Runs independently of the public-chat AI broadcast toggle; controlled by `knowledge.autoCollect.enabled`
 
-### 6. OP review system
-- Paginated review GUI for pending submissions, showing source (player / auto-collected), answerer, and thanked state
-- Left-click to **approve** → writes to the knowledge base + pays rewards
-- Right-click to **reject** → removes from the queue
-- Rewards support Vault currency and custom items
-
-### 7. Data persistence
-- **Two storage modes** (controlled by `storage.type`):
-  - `mysql` — MySQL + HikariCP pool, for multi-server / production setups
-  - `yml` — local YAML files, zero-dependency deployment (**default**)
-- Async writes, never blocks the main thread
-- Switch modes by editing `config.yml` only; no code changes required
-
-### 8. Web administration and CLI (testing)
+### 6. Web administration and CLI (testing)
 - Optional local-only web console for configuration and knowledge-base management
 - Web CLI provides plugin configuration tools, multi-turn sessions, history, and rewind support
 - **Testing status**: the Web CLI is still experimental. Validate it on a test server before using it in production.
