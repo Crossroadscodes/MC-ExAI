@@ -19,6 +19,9 @@ public class AnswerGenerator {
     }
 
     public Answer generateAnswer(PlayerQuestion question, Boolean isFormatWithLineBreak) {
+        if (llmService == null || !llmService.isConfigured()) {
+            return unavailableAnswer(isFormatWithLineBreak);
+        }
         List<GameDocument> relevantDocs = Config.knowledgeBase.retrieveRelevantDocs(
                 question.getQuestion(), question.getContext());
 
@@ -28,12 +31,26 @@ public class AnswerGenerator {
     }
 
     public Answer generateBrodcastAnswer(PlayerQuestion question, Boolean isFormatWithLineBreak) {
+        if (llmService == null || !llmService.isConfigured()) {
+            return unavailableAnswer(isFormatWithLineBreak);
+        }
         List<GameDocument> relevantDocs = Config.knowledgeBase.retrieveRelevantDocs(
                 question.getQuestion(), question.getContext());
 
         String prompt = buildBrodcastPrompt(question, relevantDocs);
         String rawAnswer = llmService.generateResponse(prompt);
         return parseResponse(rawAnswer, relevantDocs, isFormatWithLineBreak);
+    }
+
+    private Answer unavailableAnswer(Boolean isFormatWithLineBreak) {
+        Answer answer = new Answer();
+        String message = Lang.get("service.llm.not-configured");
+        answer.setAnswer(Boolean.TRUE.equals(isFormatWithLineBreak) ? formatWithLineBreak(message) : message);
+        answer.setSources(new ArrayList<>());
+        answer.setConfidence(0.0);
+        answer.setSuggestedAction(Lang.get("action.default"));
+        answer.setUnknown(true);
+        return answer;
     }
 
     private String buildSimplePrompt(PlayerQuestion question, List<GameDocument> docs) {
@@ -90,8 +107,12 @@ public class AnswerGenerator {
     }
 
     public static String formatWithLineBreak(String input) {
-        int charPerLine = Config.config.getInt("charNumPerLine");
         if (input == null || input.isEmpty()) {
+            return input;
+        }
+
+        int charPerLine = Config.config.getInt("gui.charNumPerLine");
+        if (charPerLine <= 0) {
             return input;
         }
 

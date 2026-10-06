@@ -6,13 +6,14 @@
 
   <groupId>com.exai</groupId>
   <artifactId>ExAI</artifactId>
-  <version>1.0.5</version>
+  <version>1.0.6</version>
   <packaging>jar</packaging>
 
   <name>ExAI</name>
 
   <properties>
     <java.version>1.8</java.version>
+    <spigot.api.version>1.12.2-R0.1-SNAPSHOT</spigot.api.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
@@ -104,7 +105,9 @@
       <dependency>
           <groupId>org.spigotmc</groupId>
           <artifactId>spigot-api</artifactId>
-          <version>1.20.1-R0.1-SNAPSHOT</version>
+          <!-- Compile against the oldest supported server API. Newer-only
+               capabilities must be accessed through the compat layer. -->
+          <version>${spigot.api.version}</version>
           <scope>provided</scope>
       </dependency>
       <dependency>

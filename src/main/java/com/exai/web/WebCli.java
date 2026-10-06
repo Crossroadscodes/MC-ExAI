@@ -208,8 +208,8 @@ public final class WebCli {
     }
 
     private static String doAi(String cwd, String request, String sessionId) {
-        if (Config.llm == null) {
-            throw new CliException("LLM 未初始化，请检查 llm 配置");
+        if (!Config.isLlmConfigured()) {
+            throw new CliException("模型 API 未配置，请在 config.yml 的 llm.apiKey 中填写密钥后重载插件。");
         }
         if (request.trim().isEmpty()) {
             throw new CliException("请输入自然语言需求，例如：帮我找一下远征插件的配置文件有哪些");
@@ -233,8 +233,8 @@ public final class WebCli {
     }
 
     private static String doAiStream(final String cwd, String request, String sessionId, final StreamSink sink, final List<String> confirmationIds) {
-        if (Config.llm == null) {
-            throw new CliException("LLM 未初始化，请检查 llm 配置");
+        if (!Config.isLlmConfigured()) {
+            throw new CliException("模型 API 未配置，请在 config.yml 的 llm.apiKey 中填写密钥后重载插件。");
         }
         if (request.trim().isEmpty()) {
             throw new CliException("请输入自然语言需求，例如：帮我找一下远征插件的配置文件有哪些");

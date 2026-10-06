@@ -35,6 +35,12 @@
   .bar { position:sticky; bottom:0; background:var(--bg); border-top:1px solid var(--line); padding:14px 24px; display:flex; gap:14px; align-items:center; }
   .toast { font-size:13px; }
   .toast.ok { color:#46c46a; } .toast.err { color:#ff6b6b; }
+  .login-page { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .login-card { width:100%; max-width:360px; }
+  .login-card h1 { margin:0 0 6px; font-size:22px; }
+  .login-card p { margin:0 0 18px; color:var(--muted); font-size:13px; }
+  .login-card input { margin:0 0 10px; }
+  .login-error { min-height:18px; color:#ff6b6b; font-size:13px; margin-top:10px; }
   .fb-bar { display:flex; gap:10px; align-items:center; margin-bottom:12px; }
   .fb-path { color:var(--muted); font-size:13px; word-break:break-all; }
   .fl-row { display:flex; gap:10px; padding:7px 8px; border-radius:6px; cursor:pointer; align-items:center; font-size:13px; }
@@ -85,6 +91,17 @@
 </style>
 </head>
 <body>
+<div id="loginPage" class="login-page">
+  <form class="card login-card" id="loginForm">
+    <h1>ExAI Admin</h1>
+    <p>Sign in to manage this server.</p>
+    <input id="loginUsername" type="text" autocomplete="username" placeholder="Username" required>
+    <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password" required>
+    <button class="btn" type="submit" style="width:100%">Sign in</button>
+    <div id="loginError" class="login-error"></div>
+  </form>
+</div>
+<div id="app" style="display:none">
 <header>
   <h1 id="pageTitle">ExAI</h1>
   <span class="sub" id="headerSub"></span>
@@ -93,6 +110,7 @@
     <button class="tab" id="tabKnowledge" onclick="switchView('knowledge')"></button>
     <button class="tab" id="tabFiles" onclick="switchView('files')"></button>
     <button class="tab" id="tabCli" onclick="switchView('cli')"></button>
+    <button class="tab" type="button" onclick="logout()">Sign out</button>
   </nav>
 </header>
 
@@ -177,6 +195,7 @@
   <span class="toast" id="toast"></span>
   <span class="sub" id="footerNote" style="color:var(--muted);font-size:12px;"></span>
 </div>
+</div>
 
 <script>
 // ====== 静态 UI 文案（双语） ======
@@ -244,6 +263,53 @@ let LANG = 'zh_CN';
 const i18nEls = [];   // [{el, obj}] 需随语言切换的 schema 标签/标题
 
 function t(obj) { return (obj && (obj[LANG] || obj.zh_CN)) || ''; }
+
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async function() {
+  const response = await nativeFetch.apply(null, arguments);
+  if (response.status === 401) showLogin('Your session has expired. Please sign in again.');
+  return response;
+};
+
+function showLogin(message) {
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginPage').style.display = 'flex';
+  if (message) document.getElementById('loginError').textContent = message;
+}
+
+async function logout() {
+  try { await nativeFetch('/api/auth/logout', { method:'POST' }); } finally { showLogin(); }
+}
+
+async function boot() {
+  document.getElementById('loginForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const error = document.getElementById('loginError');
+    error.textContent = '';
+    try {
+      const response = await nativeFetch('/api/auth/login', {
+        method:'POST', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ username:document.getElementById('loginUsername').value,
+          password:document.getElementById('loginPassword').value })
+      });
+      if (!response.ok) { error.textContent = 'Invalid username or password.'; return; }
+      document.getElementById('loginPassword').value = '';
+      document.getElementById('loginPage').style.display = 'none';
+      document.getElementById('app').style.display = '';
+      applyLang('zh_CN');
+      loadConfig();
+    } catch (e) { error.textContent = 'Unable to sign in: ' + e; }
+  });
+  try {
+    const response = await nativeFetch('/api/auth/session');
+    if (response.ok) {
+      document.getElementById('loginPage').style.display = 'none';
+      document.getElementById('app').style.display = '';
+      applyLang('zh_CN');
+      loadConfig();
+    }
+  } catch (e) { showLogin('Unable to reach the server.'); }
+}
 
 function el(tag, attrs, children) {
   const e = document.createElement(tag);
@@ -1076,8 +1142,7 @@ async function pdSave() {
   finally { btn.disabled = false; }
 }
 
-applyLang('zh_CN');
-loadConfig();
+boot();
 </script>
 </body>
 </html>

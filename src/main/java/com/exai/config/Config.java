@@ -8,8 +8,8 @@ import com.exai.generators.AnswerGenerator;
 import com.exai.i18n.Lang;
 import com.exai.listener.PlayerListener;
 import com.exai.manager.KnowledgeFileManager;
-import com.exai.managers.GameDataLoader;
-import com.exai.managers.GameKnowledgeBase;
+import com.exai.manager.GameDataLoader;
+import com.exai.manager.GameKnowledgeBase;
 import com.exai.service.LLMService;
 import com.exai.service.KnowledgeReviewService;
 import com.exai.command.Commands;
@@ -68,9 +68,16 @@ public class Config {
     // 图片导入用的视觉模型（为空则不支持图片导入）；复用 llm 的 apiKey/baseUrl
     public static String documentImportVisionModel;
     public static LLMService visionLlm;
-    // 网页管理服务（仅本机访问）
+    // 网页管理服务
     public static boolean webuiEnabled;
+    public static String webuiHost;
     public static int webuiPort;
+    public static String webuiAuthUsername;
+    public static String webuiAuthPasswordHash;
+    public static boolean webuiTlsEnabled;
+    public static String webuiTlsKeyStore;
+    public static String webuiTlsPassword;
+    public static String webuiTlsKeyAlias;
 
     public static void loadAll() {
         try {
@@ -136,7 +143,17 @@ public class Config {
             documentImportVisionModel = config.getString("knowledge.documentImport.visionModel", "").trim();
             assistantName = config.getString("assistant.name", "ExAI");
             webuiEnabled = config.getBoolean("webui.enabled", false);
+            webuiHost = config.getString("webui.host", "127.0.0.1").trim();
+            if (webuiHost.isEmpty()) {
+                webuiHost = "127.0.0.1";
+            }
             webuiPort = config.getInt("webui.port", 8080);
+            webuiAuthUsername = config.getString("webui.auth.username", "").trim();
+            webuiAuthPasswordHash = config.getString("webui.auth.passwordHash", "").trim();
+            webuiTlsEnabled = config.getBoolean("webui.tls.enabled", true);
+            webuiTlsKeyStore = config.getString("webui.tls.keyStore", "webui.p12").trim();
+            webuiTlsPassword = config.getString("webui.tls.password", "");
+            webuiTlsKeyAlias = config.getString("webui.tls.keyAlias", "").trim();
             DashScopeEmbedding embeddingService = new DashScopeEmbedding(
                     embeddingApiKey, embeddingBaseUrl, embeddingModel, embeddingDimensions);
             VectorStore vectorStore = new VectorStore(embeddingService);
@@ -168,6 +185,10 @@ public class Config {
      */
     public static boolean hasOpPermission(CommandSender sender) {
         return sender.isOp() || sender.hasPermission(opPermission);
+    }
+
+    public static boolean isLlmConfigured() {
+        return llm != null && llm.isConfigured();
     }
 
     public static void reloadKnowledgeBaseOnly() {

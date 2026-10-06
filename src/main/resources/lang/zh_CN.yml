@@ -9,6 +9,12 @@ prefix:
 
 # 命令
 command:
+  help-webpasswd: "&e/exai webpasswd <用户名> <密码> &7- 设置网页管理员密码"
+  webpasswd-usage: "&c用法: /exai webpasswd <用户名> <密码>"
+  webpasswd-invalid-username: "&c用户名须为 3–32 个字符，仅允许字母、数字、下划线、点或连字符。"
+  webpasswd-short-password: "&c网页密码至少需要 12 个字符。"
+  webpasswd-success: "&a网页管理员密码已更新，现有会话已退出登录。"
+  webpasswd-error: "&c无法更新网页密码: {0}"
   no-permission: "&c【系统提示】 &f你没有权限这么做！"
   reload-success: "&c【系统提示】&f{0}重载完毕"
   question-usage: "&c用法: /exai question <玩家> <问题>"
@@ -155,6 +161,7 @@ reward:
 # 助手默认回复（建议保留中文，让大模型用中文回答）
 service:
   llm:
+    not-configured: "&e模型 API 未配置，请联系管理员在 config.yml 的 llm.apiKey 中填写密钥后重载插件。"
     empty: "助手无响应"
     error: "系统错误"
 

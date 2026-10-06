@@ -42,6 +42,14 @@ public class PlayerListener implements Listener {
             return;
         }
 
+        if (!Config.isLlmConfigured()) {
+            if (isQuestion(message)) {
+                player.sendMessage(Lang.get("chat.response", Config.assistantName,
+                        Lang.get("service.llm.not-configured")));
+            }
+            return;
+        }
+
         if (!CDUtils.isPlayerChatCDEnd()) {
             return;
         }

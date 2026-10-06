@@ -11,7 +11,10 @@ import com.exai.manager.PluginHelpProbe;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import org.bukkit.Bukkit;
 
 import java.io.ByteArrayOutputStream;
@@ -23,6 +26,8 @@ import java.io.OutputStream;
 import java.lang.reflect.Type;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
+import java.security.KeyStore;
+import java.security.SecureRandom;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -31,8 +36,11 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Base64;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
 
 /**
  * 内嵌的网页管理服务（仅绑定本机 127.0.0.1，无鉴权）。
@@ -44,7 +52,9 @@ public class WebServer {
 
     private static HttpServer server;
     private static ExecutorService executor;
+    private static String boundHost;
     private static int boundPort = -1;
+    private static String boundTlsFingerprint;
 
     // ====== 字段类型常量 ======
     private static final String T_STRING = "string";
@@ -56,15 +66,17 @@ public class WebServer {
     private static final String T_ENUM = "enum";
 
     private static final String REWARD_ITEMS_PATH = "knowledge.knowledgeReview.rewards.items";
+    private static final SecureRandom TLS_RANDOM = new SecureRandom();
 
     /**
-     * 按当前配置对账 Web 服务状态：该开未开则启动，该关未关则停止，端口变化则重启。
+     * 按当前配置对账 Web 服务状态：该开未开则启动，该关未关则停止，绑定地址或端口变化则重启。
      * 在 onEnable 与每次 {@code Config.loadAll()}（含 /exai reload、网页保存）后调用。
      */
     public static synchronized void apply() {
         boolean shouldRun = Config.webuiEnabled;
         boolean running = server != null;
-        if (running && (!shouldRun || boundPort != Config.webuiPort)) {
+        if (running && (!shouldRun || boundPort != Config.webuiPort || !Config.webuiHost.equals(boundHost)
+                || !tlsFingerprint().equals(boundTlsFingerprint))) {
             stop();
             running = false;
         }
@@ -78,35 +90,45 @@ public class WebServer {
             return;
         }
         try {
-            server = HttpServer.create(new InetSocketAddress("127.0.0.1", Config.webuiPort), 0);
+            ensureKeyStore();
+            validateSecurityConfig();
+            HttpsServer https = HttpsServer.create(new InetSocketAddress(Config.webuiHost, Config.webuiPort), 0);
+            https.setHttpsConfigurator(new HttpsConfigurator(createSslContext()));
+            server = https;
             executor = Executors.newFixedThreadPool(8);
             server.setExecutor(executor);
-            server.createContext("/api/config", WebServer::handleConfig);
-            server.createContext("/api/files/list", WebServer::handleFileList);
-            server.createContext("/api/files/read", WebServer::handleFileRead);
-            server.createContext("/api/files/write", WebServer::handleFileWrite);
-            server.createContext("/api/cli/confirm-all", WebServer::handleCliConfirmAll);
-            server.createContext("/api/cli/sessions", WebServer::handleCliSessions);
-            server.createContext("/api/cli/session", WebServer::handleCliSession);
-            server.createContext("/api/cli/stream", WebServer::handleCliStream);
-            server.createContext("/api/cli", WebServer::handleCli);
-            server.createContext("/api/plugins/scan", WebServer::handlePluginsScan);
-            server.createContext("/api/plugins/gen-desc-all", WebServer::handlePluginGenDescAll);
-            server.createContext("/api/plugins/gen-desc", WebServer::handlePluginGenDesc);
-            server.createContext("/api/plugins", WebServer::handlePlugins);
-            server.createContext("/api/knowledge/add", WebServer::handleKnowledgeAdd);
-            server.createContext("/api/knowledge/update", WebServer::handleKnowledgeUpdate);
-            server.createContext("/api/knowledge/delete", WebServer::handleKnowledgeDelete);
-            server.createContext("/api/knowledge/migrate-db", WebServer::handleKnowledgeMigrateDb);
-            server.createContext("/api/knowledge", WebServer::handleKnowledgeList);
+            server.createContext("/api/auth/login", WebServer::handleLogin);
+            server.createContext("/api/auth/logout", WebServer::handleLogout);
+            server.createContext("/api/auth/session", WebServer::handleSession);
+            createProtectedContext("/api/config", WebServer::handleConfig);
+            createProtectedContext("/api/files/list", WebServer::handleFileList);
+            createProtectedContext("/api/files/read", WebServer::handleFileRead);
+            createProtectedContext("/api/files/write", WebServer::handleFileWrite);
+            createProtectedContext("/api/cli/confirm-all", WebServer::handleCliConfirmAll);
+            createProtectedContext("/api/cli/sessions", WebServer::handleCliSessions);
+            createProtectedContext("/api/cli/session", WebServer::handleCliSession);
+            createProtectedContext("/api/cli/stream", WebServer::handleCliStream);
+            createProtectedContext("/api/cli", WebServer::handleCli);
+            createProtectedContext("/api/plugins/scan", WebServer::handlePluginsScan);
+            createProtectedContext("/api/plugins/gen-desc-all", WebServer::handlePluginGenDescAll);
+            createProtectedContext("/api/plugins/gen-desc", WebServer::handlePluginGenDesc);
+            createProtectedContext("/api/plugins", WebServer::handlePlugins);
+            createProtectedContext("/api/knowledge/add", WebServer::handleKnowledgeAdd);
+            createProtectedContext("/api/knowledge/update", WebServer::handleKnowledgeUpdate);
+            createProtectedContext("/api/knowledge/delete", WebServer::handleKnowledgeDelete);
+            createProtectedContext("/api/knowledge/migrate-db", WebServer::handleKnowledgeMigrateDb);
+            createProtectedContext("/api/knowledge", WebServer::handleKnowledgeList);
             server.createContext("/", WebServer::handleRoot);
             server.start();
+            boundHost = Config.webuiHost;
             boundPort = Config.webuiPort;
+            boundTlsFingerprint = tlsFingerprint();
             ExAI.getInstance().getLogger().info(
-                    "网页管理服务已启动: http://127.0.0.1:" + Config.webuiPort);
-        } catch (IOException e) {
+                    "网页管理服务已启动: https://" + Config.webuiHost + ":" + Config.webuiPort);
+        } catch (Exception e) {
             ExAI.getInstance().getLogger().warning(
-                    "网页管理服务启动失败(端口 " + Config.webuiPort + " 可能被占用): " + e.getMessage());
+                    "网页管理服务启动失败(" + Config.webuiHost + ":" + Config.webuiPort
+                            + " 可能不可用或已被占用): " + e.getMessage());
             server = null;
             if (executor != null) {
                 executor.shutdownNow();
@@ -119,11 +141,211 @@ public class WebServer {
         if (server != null) {
             server.stop(0);
             server = null;
+            boundHost = null;
             boundPort = -1;
+            boundTlsFingerprint = null;
+            WebAuth.invalidateAll();
         }
         if (executor != null) {
             executor.shutdownNow();
             executor = null;
+        }
+    }
+
+    public static void invalidateWebSessions() {
+        WebAuth.invalidateAll();
+    }
+
+    private static String tlsFingerprint() {
+        return Config.webuiTlsEnabled + "|" + Config.webuiTlsKeyStore + "|" + Config.webuiTlsPassword
+                + "|" + Config.webuiAuthUsername + "|" + Config.webuiAuthPasswordHash;
+    }
+
+    private static void validateSecurityConfig() {
+        if (!Config.webuiTlsEnabled) {
+            throw new IllegalStateException("webui.tls.enabled must be true; HTTP admin access is disabled");
+        }
+        if (Config.webuiAuthUsername.isEmpty() || Config.webuiAuthPasswordHash.isEmpty()) {
+            throw new IllegalStateException("webui.auth.username and passwordHash must be configured; run /exai webpasswd <username> <password>");
+        }
+        if (Config.webuiTlsKeyStore.isEmpty() || Config.webuiTlsPassword.isEmpty()) {
+            throw new IllegalStateException("webui.tls.keyStore and password must be configured");
+        }
+    }
+
+    /** Creates a self-signed PKCS#12 store only when the configured store is absent. */
+    private static void ensureKeyStore() throws Exception {
+        if (!Config.webuiTlsEnabled || Config.webuiTlsKeyStore.isEmpty()) {
+            return;
+        }
+        File dataFolder = ExAI.getInstance().getDataFolder().getCanonicalFile();
+        File keyStore = new File(dataFolder, Config.webuiTlsKeyStore).getCanonicalFile();
+        if (!keyStore.getPath().startsWith(dataFolder.getPath() + File.separator)) {
+            throw new IllegalStateException("webui.tls.keyStore must be inside the plugin data folder");
+        }
+        if (keyStore.isFile()) {
+            return;
+        }
+        File parent = keyStore.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            throw new IOException("Unable to create key store directory: " + parent);
+        }
+        String password = Config.webuiTlsPassword;
+        if (password == null || password.isEmpty()) {
+            byte[] random = new byte[24];
+            TLS_RANDOM.nextBytes(random);
+            password = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
+            Config.webuiTlsPassword = password;
+            Config.config.set("webui.tls.password", password);
+            ExAI.getInstance().saveConfig();
+        }
+        String host = Config.webuiHost;
+        if (host == null || host.isEmpty() || "0.0.0.0".equals(host) || "::".equals(host)) {
+            host = "localhost";
+        }
+        String san = host.matches("[0-9.]+") || host.indexOf(':') >= 0 ? "ip:" + host : "dns:" + host;
+        List<String> command = new ArrayList<>();
+        command.add(keyToolPath());
+        command.add("-genkeypair");
+        command.add("-alias"); command.add("exai");
+        command.add("-keyalg"); command.add("RSA");
+        command.add("-keysize"); command.add("2048");
+        command.add("-sigalg"); command.add("SHA256withRSA");
+        command.add("-validity"); command.add("825");
+        command.add("-storetype"); command.add("PKCS12");
+        command.add("-keystore"); command.add(keyStore.getPath());
+        command.add("-storepass"); command.add(password);
+        command.add("-keypass"); command.add(password);
+        command.add("-dname"); command.add("CN=" + host);
+        command.add("-ext"); command.add("SAN=" + san);
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        String output;
+        try (InputStream in = process.getInputStream()) {
+            output = new String(readAll(in), StandardCharsets.UTF_8);
+        }
+        if (process.waitFor() != 0 || !keyStore.isFile()) {
+            throw new IOException("keytool could not create PKCS#12 store: " + output.trim());
+        }
+        ExAI.getInstance().getLogger().warning("Web HTTPS created a self-signed certificate: "
+                + keyStore.getName() + ". Browsers will show a certificate warning until a trusted certificate is installed.");
+    }
+
+    private static String keyToolPath() {
+        String exe = File.separatorChar == '\\' ? "keytool.exe" : "keytool";
+        File bundled = new File(new File(System.getProperty("java.home"), "bin"), exe);
+        return bundled.isFile() ? bundled.getPath() : exe;
+    }
+
+    private static SSLContext createSslContext() throws Exception {
+        File dataFolder = ExAI.getInstance().getDataFolder().getCanonicalFile();
+        File keyStore = new File(dataFolder, Config.webuiTlsKeyStore).getCanonicalFile();
+        if (!keyStore.getPath().startsWith(dataFolder.getPath() + File.separator) || !keyStore.isFile()) {
+            throw new IllegalStateException("PKCS#12 key store not found inside the plugin data folder: " + Config.webuiTlsKeyStore);
+        }
+        KeyStore store = KeyStore.getInstance("PKCS12");
+        char[] password = Config.webuiTlsPassword.toCharArray();
+        try (InputStream in = new FileInputStream(keyStore)) {
+            store.load(in, password);
+        }
+        KeyManagerFactory managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        managers.init(store, password);
+        SSLContext context = SSLContext.getInstance("TLS");
+        context.init(managers.getKeyManagers(), null, null);
+        return context;
+    }
+
+    private static void createProtectedContext(String path, HttpHandler handler) {
+        server.createContext(path, ex -> {
+            if (!authorize(ex)) {
+                return;
+            }
+            handler.handle(ex);
+        });
+    }
+
+    private static boolean authorize(HttpExchange ex) throws IOException {
+        if (!WebAuth.valid(cookie(ex, "EXAI_SESSION"))) {
+            sendError(ex, 401, "Authentication required");
+            ex.close();
+            return false;
+        }
+        String method = ex.getRequestMethod();
+        if ("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method)
+                || "PATCH".equalsIgnoreCase(method) || "DELETE".equalsIgnoreCase(method)) {
+            String origin = ex.getRequestHeaders().getFirst("Origin");
+            String expected = "https://" + ex.getRequestHeaders().getFirst("Host");
+            if (origin != null && !origin.equalsIgnoreCase(expected)) {
+                sendError(ex, 403, "Invalid request origin");
+                ex.close();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String cookie(HttpExchange ex, String name) {
+        String raw = ex.getRequestHeaders().getFirst("Cookie");
+        if (raw == null) return null;
+        for (String part : raw.split(";")) {
+            String value = part.trim();
+            int pos = value.indexOf('=');
+            if (pos > 0 && name.equals(value.substring(0, pos))) return value.substring(pos + 1);
+        }
+        return null;
+    }
+
+    // ====== Authentication handlers ======
+
+    private static void handleLogin(HttpExchange ex) throws IOException {
+        try {
+            if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+                sendText(ex, 405, "Method Not Allowed");
+                return;
+            }
+            Map<String, Object> req = GSON.fromJson(readBody(ex), new TypeToken<Map<String, Object>>() {}.getType());
+            String username = req == null || req.get("username") == null ? "" : String.valueOf(req.get("username"));
+            String password = req == null || req.get("password") == null ? "" : String.valueOf(req.get("password"));
+            String token = WebAuth.login(username, password, Config.webuiAuthUsername,
+                    Config.webuiAuthPasswordHash, ex.getRemoteAddress().getAddress());
+            if (token == null) {
+                sendError(ex, 401, "Invalid username or password");
+                return;
+            }
+            ex.getResponseHeaders().add("Set-Cookie", "EXAI_SESSION=" + token
+                    + "; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Strict");
+            sendOk(ex);
+        } finally {
+            ex.close();
+        }
+    }
+
+    private static void handleLogout(HttpExchange ex) throws IOException {
+        try {
+            if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+                sendText(ex, 405, "Method Not Allowed");
+                return;
+            }
+            WebAuth.logout(cookie(ex, "EXAI_SESSION"));
+            ex.getResponseHeaders().add("Set-Cookie", "EXAI_SESSION=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict");
+            sendOk(ex);
+        } finally {
+            ex.close();
+        }
+    }
+
+    private static void handleSession(HttpExchange ex) throws IOException {
+        try {
+            if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+                sendText(ex, 405, "Method Not Allowed");
+                return;
+            }
+            if (!WebAuth.valid(cookie(ex, "EXAI_SESSION"))) {
+                sendError(ex, 401, "Authentication required");
+                return;
+            }
+            sendOk(ex);
+        } finally {
+            ex.close();
         }
     }
 
@@ -142,6 +364,10 @@ public class WebServer {
             }
             ex.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
             ex.getResponseHeaders().set("Cache-Control", "no-store");
+            ex.getResponseHeaders().set("Content-Security-Policy",
+                    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'");
+            ex.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            ex.getResponseHeaders().set("Referrer-Policy", "no-referrer");
             ex.sendResponseHeaders(200, page.length);
             try (OutputStream os = ex.getResponseBody()) {
                 os.write(page);
@@ -939,6 +1165,7 @@ public class WebServer {
                 field("knowledge.knowledgeReview.rewards.vault.currencyName", "货币名称", "Currency name", T_STRING)));
         groups.add(group("网页管理服务", "Web admin service",
                 field("webui.enabled", "启用", "Enabled", T_BOOLEAN),
+                field("webui.host", "绑定地址", "Bind host", T_STRING),
                 field("webui.port", "端口", "Port", T_INT)));
         return groups;
     }

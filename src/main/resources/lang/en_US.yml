@@ -8,6 +8,12 @@ prefix:
   assistant-broadcast: "&c[{0}]"
 
 command:
+  help-webpasswd: "&e/exai webpasswd <username> <password> &7- Set web administrator password"
+  webpasswd-usage: "&cUsage: /exai webpasswd <username> <password>"
+  webpasswd-invalid-username: "&cUsername must be 3-32 characters: letters, digits, _, . or -."
+  webpasswd-short-password: "&cWeb password must contain at least 12 characters."
+  webpasswd-success: "&aWeb administrator password updated; existing sessions were signed out."
+  webpasswd-error: "&cUnable to update web password: {0}"
   no-permission: "&c[System] &fYou don't have permission to do this!"
   reload-success: "&c[System]&f {0} reloaded"
   question-usage: "&cUsage: /exai question <player> <question>"
@@ -149,6 +155,7 @@ reward:
 
 service:
   llm:
+    not-configured: "&eThe model API is not configured. Ask an administrator to set llm.apiKey in config.yml and reload the plugin."
     empty: "Assistant has no response"
     error: "System error"
 

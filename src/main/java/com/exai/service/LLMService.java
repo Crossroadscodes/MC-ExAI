@@ -23,6 +23,21 @@ public class LLMService {
         this.answerTemperature = answerTemperature;
     }
 
+    /** Returns whether all fields required for an OpenAI-compatible request are configured. */
+    public boolean isConfigured() {
+        if (!hasText(apiKey) || !hasText(baseUrl) || !hasText(model)) {
+            return false;
+        }
+        String key = apiKey.trim().toLowerCase(java.util.Locale.ROOT);
+        return !key.contains("your-api")
+                && !key.contains("your_api")
+                && !key.contains("填你自己的");
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
     /** 本地工具执行器：收到模型返回的 function name 与 arguments，返回工具结果 JSON。 */
     public interface ToolExecutor {
         JsonObject execute(String name, JsonObject arguments);
@@ -57,6 +72,9 @@ public class LLMService {
     }
 
     public String generateResponse(String prompt) {
+        if (!isConfigured()) {
+            return com.exai.i18n.Lang.get("service.llm.not-configured");
+        }
         try {
             String content = request(prompt, answerTemperature, 500);
             return content != null ? content : com.exai.i18n.Lang.get("service.llm.empty");
@@ -71,6 +89,9 @@ public class LLMService {
      * 便于调用方（如知识初审）自行判断与降级。
      */
     public String complete(String prompt, double temperature, int maxTokens) {
+        if (!isConfigured()) {
+            return null;
+        }
         try {
             return request(prompt, temperature, maxTokens);
         } catch (Exception e) {

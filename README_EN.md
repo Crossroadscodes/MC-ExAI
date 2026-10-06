@@ -1,11 +1,13 @@
 # ExAI — AI Assistant Plugin for Minecraft
 
-[![Version](https://img.shields.io/badge/version-1.0.5-blue)](https://github.com/Crossroadscodes/MC-ExAI)
+[![Version](https://img.shields.io/badge/version-1.0.6-blue)](https://github.com/Crossroadscodes/MC-ExAI/releases/tag/v1.0.6)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **Languages / 语言**: [简体中文](README.md) · [English](README_EN.md)
 
 ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports public-chat auto-replies, in-game GUI conversations, and a community-curated knowledge base with RAG retrieval.
+
+v1.0.6 improves 1.21 compatibility, uses one complete Q&A per vector document, and adds web administrator authentication, password hashing, and HTTPS support. Compilation against the 1.21.4 API has been verified; other 1.21 versions still require runtime testing. The release attachment is the original server JAR and retains its internal version of 1.0.5.
 
 ---
 

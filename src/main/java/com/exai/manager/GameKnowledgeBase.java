@@ -1,11 +1,10 @@
-package com.exai.managers;
+package com.exai.manager;
 
 import com.exai.ExAI;
 import com.exai.embedding.DashScopeEmbedding;
 import com.exai.embedding.VectorStore;
 import com.exai.entity.GameDocument;
 import com.exai.i18n.Lang;
-import com.exai.manager.PluginDescriptionManager;
 import org.bukkit.Bukkit;
 
 import java.util.ArrayList;

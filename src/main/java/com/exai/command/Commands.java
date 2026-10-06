@@ -9,6 +9,8 @@ import com.exai.i18n.Lang;
 import com.exai.service.DocumentImportService;
 import com.exai.utils.CDUtils;
 import com.exai.utils.DataUtils;
+import com.exai.web.WebAuth;
+import com.exai.web.WebServer;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -22,7 +24,7 @@ import java.util.stream.Collectors;
 
 public class Commands implements CommandExecutor, TabCompleter {
 
-    private static final String[] SUB_COMMANDS = {"reload", "opengui", "question", "import", "help"};
+    private static final String[] SUB_COMMANDS = {"reload", "opengui", "question", "import", "webpasswd", "help"};
 
     @Override
     public boolean onCommand(CommandSender sender, org.bukkit.command.Command command, String label, String[] args) {
@@ -87,6 +89,36 @@ public class Commands implements CommandExecutor, TabCompleter {
                             () -> DocumentImportService.importFile(sender, importFile));
                     return true;
 
+                case "webpasswd":
+                    if ((sender instanceof Player && !sender.isOp()) || args.length != 3) {
+                        sender.sendMessage(Lang.get("command.webpasswd-usage"));
+                        return false;
+                    }
+                    String webUsername = args[1].trim();
+                    String webPassword = args[2];
+                    if (!webUsername.matches("[A-Za-z0-9_.-]{3,32}")) {
+                        sender.sendMessage(Lang.get("command.webpasswd-invalid-username"));
+                        return false;
+                    }
+                    if (webPassword.length() < 12) {
+                        sender.sendMessage(Lang.get("command.webpasswd-short-password"));
+                        return false;
+                    }
+                    try {
+                        String hash = WebAuth.hashPassword(webPassword);
+                        ExAI.getInstance().getConfig().set("webui.auth.username", webUsername);
+                        ExAI.getInstance().getConfig().set("webui.auth.passwordHash", hash);
+                        ExAI.getInstance().saveConfig();
+                        Config.webuiAuthUsername = webUsername;
+                        Config.webuiAuthPasswordHash = hash;
+                        WebServer.invalidateWebSessions();
+                        WebServer.apply();
+                        sender.sendMessage(Lang.get("command.webpasswd-success"));
+                    } catch (Exception e) {
+                        sender.sendMessage(Lang.get("command.webpasswd-error", e.getMessage()));
+                    }
+                    return true;
+
                 case "help":
                     sendHelp(sender);
                     return true;
@@ -107,6 +139,7 @@ public class Commands implements CommandExecutor, TabCompleter {
             sender.sendMessage(Lang.get("command.help-opengui"));
             sender.sendMessage(Lang.get("command.help-question"));
             sender.sendMessage(Lang.get("command.help-import"));
+            sender.sendMessage(Lang.get("command.help-webpasswd"));
         } else {
             sender.sendMessage(Lang.get("command.help-opengui"));
         }

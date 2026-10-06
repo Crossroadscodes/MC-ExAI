@@ -1,10 +1,9 @@
-package com.exai.managers;
+package com.exai.manager;
 
 import com.exai.ExAI;
 import com.exai.entity.GameDocument;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.i18n.Lang;
-import com.exai.manager.KnowledgeFileManager;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
@@ -12,7 +11,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public class GameDataLoader {
-    private static final int ENTRIES_PER_CHUNK = 3;
     private boolean debugMode = false;
 
     public GameDataLoader() {
@@ -78,9 +76,7 @@ public class GameDataLoader {
         return createChunksFromEntries(entries);
     }
 
-    /**
-     * Each vector document contains three complete Q&A entries, never a partial entry.
-     */
+    /** Each vector document contains one complete Q&A entry for precise retrieval. */
     private List<GameDocument> createChunksFromEntries(List<KnowledgeEntry> entries) {
         List<GameDocument> chunks = new ArrayList<>();
 
@@ -88,19 +84,14 @@ public class GameDataLoader {
             return chunks;
         }
 
-        int chunkCount = (int) Math.ceil((double) entries.size() / ENTRIES_PER_CHUNK);
-
-        for (int i = 0; i < chunkCount; i++) {
-            int start = i * ENTRIES_PER_CHUNK;
-            int end = Math.min(start + ENTRIES_PER_CHUNK, entries.size());
-
-            List<KnowledgeEntry> chunkEntries = entries.subList(start, end);
-            String chunkText = mergeEntriesToText(chunkEntries);
+        for (int i = 0; i < entries.size(); i++) {
+            KnowledgeEntry entry = entries.get(i);
+            String chunkText = mergeEntriesToText(Collections.singletonList(entry));
 
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("chunk_id", i + 1);
-            metadata.put("chunk_size", chunkEntries.size());
-            metadata.put("entry_range", (start + 1) + "-" + end);
+            metadata.put("chunk_size", 1);
+            metadata.put("entry_range", String.valueOf(i + 1));
             metadata.put("total_entries", entries.size());
 
             GameDocument chunk = new GameDocument(
