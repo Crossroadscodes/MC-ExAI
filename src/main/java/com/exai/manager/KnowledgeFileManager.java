@@ -131,7 +131,10 @@ public class KnowledgeFileManager {
             Object q = m.get("question");
             Object a = m.get("answer");
             if (q == null || a == null) continue;
-            list.add(new KnowledgeEntry(q.toString(), a.toString(), "", 0L));
+            KnowledgeEntry entry = new KnowledgeEntry(q.toString(), a.toString(), "", 0L);
+            Object id = m.get("id");
+            entry.setKnowledgeId(id == null ? null : id.toString().trim());
+            list.add(entry);
         }
         return list;
     }
@@ -143,6 +146,9 @@ public class KnowledgeFileManager {
         List<Map<String, Object>> list = new ArrayList<>();
         for (KnowledgeEntry e : entries) {
             Map<String, Object> m = new LinkedHashMap<>();
+            if (e.getKnowledgeId() != null && !e.getKnowledgeId().trim().isEmpty()) {
+                m.put("id", e.getKnowledgeId());
+            }
             m.put("question", e.getQuestion());
             m.put("answer", e.getAnswer());
             list.add(m);
@@ -176,8 +182,53 @@ public class KnowledgeFileManager {
         synchronized (mutateLock) {
             List<KnowledgeEntry> all = readAll();
             if (index < 0 || index >= all.size()) return;
+            KnowledgeEntry old = all.get(index);
+            entry.setKnowledgeId(old.getKnowledgeId());
+            entry.setSubmitter(old.getSubmitter());
+            entry.setSource(old.getSource());
+            entry.setThanked(old.isThanked());
             all.set(index, entry);
             writeAll(all);
+        }
+    }
+
+    /** 把异步生成的 ID 合并到当前最新缓存，避免覆盖生成期间发生的其它知识修改。 */
+    public static int mergeMissingKnowledgeIds(Map<String, String> idsByFingerprint) {
+        if (idsByFingerprint == null || idsByFingerprint.isEmpty()) return 0;
+        synchronized (mutateLock) {
+            List<KnowledgeEntry> all = readAll();
+            java.util.Set<String> used = new java.util.HashSet<>();
+            for (KnowledgeEntry entry : all) {
+                if (entry.getKnowledgeId() != null && !entry.getKnowledgeId().trim().isEmpty()) {
+                    used.add(entry.getKnowledgeId());
+                }
+            }
+            int changed = 0;
+            for (KnowledgeEntry entry : all) {
+                if (entry.getKnowledgeId() != null && !entry.getKnowledgeId().trim().isEmpty()) continue;
+                String id = idsByFingerprint.get(KnowledgeIdService.fingerprint(entry));
+                if (id != null && !id.trim().isEmpty() && !used.contains(id)) {
+                    entry.setKnowledgeId(id);
+                    used.add(id);
+                    changed++;
+                }
+            }
+            if (changed > 0) writeAll(all);
+            return changed;
+        }
+    }
+
+    public static boolean replaceKnowledgeId(String oldId, String newId) {
+        synchronized (mutateLock) {
+            List<KnowledgeEntry> all = readAll();
+            for (KnowledgeEntry entry : all) {
+                if (oldId.equals(entry.getKnowledgeId())) {
+                    entry.setKnowledgeId(newId);
+                    writeAll(all);
+                    return true;
+                }
+            }
+            return false;
         }
     }
 

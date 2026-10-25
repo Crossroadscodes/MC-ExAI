@@ -5,6 +5,7 @@ import com.exai.data.DataContainer;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.LogEntry;
 import com.exai.entity.PendingReward;
+import com.exai.entity.RagStatus;
 import org.bukkit.Bukkit;
 
 import java.util.Collections;
@@ -76,16 +77,16 @@ public class DataUtils {
     }
 
     public static void insertLog(String playerName, String playerInput, String aiResponse,
-                                 String documentId, String source) {
+                                 String documentId, String source, RagStatus ragStatus) {
         if (DataContainer.storage != null) {
-            DataContainer.storage.insertLog(playerName, playerInput, aiResponse, documentId, source);
+            DataContainer.storage.insertLog(playerName, playerInput, aiResponse, documentId, source, ragStatus);
         }
     }
 
     public static void insertLogAsync(String playerName, String playerInput, String aiResponse,
-                                      String documentId, String source) {
+                                      String documentId, String source, RagStatus ragStatus) {
         Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(),
-                () -> insertLog(playerName, playerInput, aiResponse, documentId, source));
+                () -> insertLog(playerName, playerInput, aiResponse, documentId, source, ragStatus));
     }
 
     public static int getLogTotalCount() {

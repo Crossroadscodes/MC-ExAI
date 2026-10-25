@@ -7,6 +7,9 @@ import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.LogEntry;
 import com.exai.entity.PendingReward;
 import com.exai.entity.PluginDescriptionEntry;
+import com.exai.entity.RagStatus;
+import com.exai.evaluation.EvaluationCase;
+import com.exai.evaluation.ExpectedBehavior;
 import com.exai.i18n.Lang;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -18,7 +21,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 public class YamlStorage implements DataStorage {
 
@@ -26,21 +32,25 @@ public class YamlStorage implements DataStorage {
     private static final String PENDING_FILE = "data/pending_knowledge.yml";
     private static final String COUNT_FILE = "data/pending_count.yml";
     private static final String REWARD_FILE = "data/pending_rewards.yml";
+    private static final String EVALUATION_FILE = "evaluation/test-set.yml";
 
     private final Object logLock = new Object();
     private final Object pendingLock = new Object();
     private final Object countLock = new Object();
     private final Object rewardLock = new Object();
+    private final Object evaluationLock = new Object();
 
     private File logFile;
     private File pendingFile;
     private File countFile;
     private File rewardFile;
+    private File evaluationFile;
 
     private YamlConfiguration logConf;
     private YamlConfiguration pendingConf;
     private YamlConfiguration countConf;
     private YamlConfiguration rewardConf;
+    private YamlConfiguration evaluationConf;
 
     @Override
     public void initialize() {
@@ -52,11 +62,17 @@ public class YamlStorage implements DataStorage {
         pendingFile = new File(ExAI.getInstance().getDataFolder(), PENDING_FILE);
         countFile = new File(ExAI.getInstance().getDataFolder(), COUNT_FILE);
         rewardFile = new File(ExAI.getInstance().getDataFolder(), REWARD_FILE);
+        evaluationFile = new File(ExAI.getInstance().getDataFolder(), EVALUATION_FILE);
+        File evaluationDir = evaluationFile.getParentFile();
+        if (evaluationDir != null && !evaluationDir.exists()) {
+            evaluationDir.mkdirs();
+        }
 
         logConf = YamlConfiguration.loadConfiguration(logFile);
         pendingConf = YamlConfiguration.loadConfiguration(pendingFile);
         countConf = YamlConfiguration.loadConfiguration(countFile);
         rewardConf = YamlConfiguration.loadConfiguration(rewardFile);
+        evaluationConf = YamlConfiguration.loadConfiguration(evaluationFile);
 
         if (!logConf.contains("next-id")) {
             logConf.set("next-id", 1);
@@ -84,6 +100,9 @@ public class YamlStorage implements DataStorage {
         }
         synchronized (rewardLock) {
             saveQuietly(rewardConf, rewardFile);
+        }
+        synchronized (evaluationLock) {
+            saveQuietly(evaluationConf, evaluationFile);
         }
     }
 
@@ -219,7 +238,7 @@ public class YamlStorage implements DataStorage {
 
     @Override
     public void insertLog(String playerName, String playerInput, String aiResponse,
-                          String documentId, String source) {
+                          String documentId, String source, RagStatus ragStatus) {
         synchronized (logLock) {
             int id = logConf.getInt("next-id", 1);
             String base = "entries." + id;
@@ -228,6 +247,7 @@ public class YamlStorage implements DataStorage {
             logConf.set(base + ".ai-response", aiResponse);
             logConf.set(base + ".document-id", documentId == null ? "" : documentId);
             logConf.set(base + ".source", source == null ? "" : source);
+            logConf.set(base + ".rag-status", (ragStatus == null ? RagStatus.UNKNOWN : ragStatus).name());
             logConf.set(base + ".create-time",
                     new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
             logConf.set("next-id", id + 1);
@@ -274,6 +294,7 @@ public class YamlStorage implements DataStorage {
                         logConf.getString(base + ".ai-response", ""),
                         logConf.getString(base + ".document-id", ""),
                         logConf.getString(base + ".source", ""),
+                        RagStatus.fromString(logConf.getString(base + ".rag-status", "UNKNOWN")),
                         logConf.getString(base + ".create-time", "")
                 );
                 result.add(entry);
@@ -287,6 +308,141 @@ public class YamlStorage implements DataStorage {
         synchronized (logLock) {
             logConf.set("entries." + id, null);
             saveQuietly(logConf, logFile);
+        }
+    }
+
+    @Override
+    public List<EvaluationCase> readEvaluationCases() {
+        synchronized (evaluationLock) {
+            List<EvaluationCase> out = new ArrayList<>();
+            for (Map<?, ?> raw : evaluationConf.getMapList("cases")) {
+                EvaluationCase item = new EvaluationCase();
+                item.setId(stringValue(raw.get("id")));
+                item.setEnabled(booleanValue(raw.get("enabled"), true));
+                item.setSourceLogFingerprint(stringValue(raw.get("sourceLogFingerprint")));
+                item.setQuestion(stringValue(raw.get("question")));
+                try {
+                    item.setExpectedBehavior(ExpectedBehavior.valueOf(
+                            stringValue(raw.get("expectedBehavior"))));
+                } catch (Exception ignored) {
+                    continue;
+                }
+                item.setReferenceAnswer(stringValue(raw.get("referenceAnswer")));
+                item.setExpectedKnowledgeIds(stringList(raw.get("expectedKnowledgeIds")));
+                item.setUpdatedAt(longValue(raw.get("updatedAt")));
+                if (!item.getQuestion().trim().isEmpty()) out.add(item);
+            }
+            out.sort(Comparator.comparingLong(EvaluationCase::getUpdatedAt).reversed());
+            return out;
+        }
+    }
+
+    @Override
+    public EvaluationCase upsertEvaluationCase(String sourceFingerprint, EvaluationCase input) {
+        synchronized (evaluationLock) {
+            List<EvaluationCase> all = readEvaluationCases();
+            EvaluationCase target = null;
+            for (EvaluationCase item : all) {
+                if (sourceFingerprint.equals(item.getSourceLogFingerprint())) {
+                    target = item;
+                    break;
+                }
+            }
+            if (target == null) {
+                target = new EvaluationCase();
+                target.setId("case_" + UUID.randomUUID().toString().replace("-", ""));
+                target.setSourceLogFingerprint(sourceFingerprint);
+                all.add(target);
+            }
+            copyEvaluationFields(input, target);
+            target.setUpdatedAt(System.currentTimeMillis());
+            writeEvaluationCases(all);
+            return target;
+        }
+    }
+
+    @Override
+    public boolean deleteEvaluationCase(String caseId) {
+        synchronized (evaluationLock) {
+            List<EvaluationCase> all = readEvaluationCases();
+            boolean removed = all.removeIf(item -> caseId != null && caseId.equals(item.getId()));
+            if (removed) writeEvaluationCases(all);
+            return removed;
+        }
+    }
+
+    @Override
+    public int replaceEvaluationKnowledgeId(String oldId, String newId) {
+        synchronized (evaluationLock) {
+            List<EvaluationCase> all = readEvaluationCases();
+            int changed = 0;
+            for (EvaluationCase item : all) {
+                List<String> ids = item.getExpectedKnowledgeIds();
+                for (int i = 0; i < ids.size(); i++) {
+                    if (oldId.equals(ids.get(i))) {
+                        ids.set(i, newId);
+                        changed++;
+                    }
+                }
+            }
+            if (changed > 0) writeEvaluationCases(all);
+            return changed;
+        }
+    }
+
+    private void writeEvaluationCases(List<EvaluationCase> cases) {
+        evaluationConf.set("version", 1);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (EvaluationCase item : cases) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", item.getId());
+            row.put("enabled", item.isEnabled());
+            row.put("sourceLogFingerprint", item.getSourceLogFingerprint());
+            row.put("question", item.getQuestion());
+            row.put("expectedBehavior", item.getExpectedBehavior().name());
+            row.put("referenceAnswer", item.getReferenceAnswer());
+            row.put("expectedKnowledgeIds", item.getExpectedKnowledgeIds());
+            row.put("updatedAt", item.getUpdatedAt());
+            rows.add(row);
+        }
+        evaluationConf.set("cases", rows);
+        saveQuietly(evaluationConf, evaluationFile);
+    }
+
+    private static void copyEvaluationFields(EvaluationCase source, EvaluationCase target) {
+        target.setEnabled(source.isEnabled());
+        target.setQuestion(source.getQuestion());
+        target.setExpectedBehavior(source.getExpectedBehavior());
+        target.setReferenceAnswer(source.getReferenceAnswer());
+        target.setExpectedKnowledgeIds(new ArrayList<>(source.getExpectedKnowledgeIds()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> stringList(Object value) {
+        List<String> out = new ArrayList<>();
+        if (value instanceof List) {
+            for (Object item : (List<Object>) value) {
+                String text = stringValue(item).trim();
+                if (!text.isEmpty() && !out.contains(text)) out.add(text);
+            }
+        }
+        return out;
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private static boolean booleanValue(Object value, boolean fallback) {
+        return value == null ? fallback : Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    private static long longValue(Object value) {
+        if (value instanceof Number) return ((Number) value).longValue();
+        try {
+            return Long.parseLong(stringValue(value));
+        } catch (Exception ignored) {
+            return 0L;
         }
     }
 

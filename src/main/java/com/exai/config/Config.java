@@ -22,10 +22,12 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class Config {
+    private static final AtomicLong KNOWLEDGE_BUILD_VERSION = new AtomicLong();
     public static FileConfiguration config;
-    public static GameKnowledgeBase knowledgeBase;
+    public static volatile GameKnowledgeBase knowledgeBase;
     public static AnswerGenerator generator;
     public static String storageType;
     public static String address;
@@ -78,6 +80,8 @@ public class Config {
     public static String webuiTlsKeyStore;
     public static String webuiTlsPassword;
     public static String webuiTlsKeyAlias;
+    public static int evaluationPassScore;
+    public static int evaluationResultRetention;
 
     public static void loadAll() {
         try {
@@ -154,13 +158,23 @@ public class Config {
             webuiTlsKeyStore = config.getString("webui.tls.keyStore", "webui.p12").trim();
             webuiTlsPassword = config.getString("webui.tls.password", "");
             webuiTlsKeyAlias = config.getString("webui.tls.keyAlias", "").trim();
+            evaluationPassScore = Math.max(0, Math.min(5,
+                    config.getInt("evaluation.judge.passScore", 4)));
+            evaluationResultRetention = Math.max(1,
+                    config.getInt("evaluation.resultRetention", 20));
+            // 知识 ID 自动补齐会在异步知识库初始化中使用 LLM，必须先完成服务构造。
+            llm = new LLMService(apiKey, llmBaseUrl, llmModel, llmTemperature);
             DashScopeEmbedding embeddingService = new DashScopeEmbedding(
                     embeddingApiKey, embeddingBaseUrl, embeddingModel, embeddingDimensions);
             VectorStore vectorStore = new VectorStore(embeddingService);
             GameDataLoader dataLoader = new GameDataLoader();
-            knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
-            knowledgeBase.initializeKnowledgeBase();
-            llm = new LLMService(apiKey, llmBaseUrl, llmModel, llmTemperature);
+            GameKnowledgeBase candidate = new GameKnowledgeBase(
+                    vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
+            long buildVersion = KNOWLEDGE_BUILD_VERSION.incrementAndGet();
+            if (knowledgeBase == null) knowledgeBase = candidate;
+            candidate.initializeKnowledgeBase(() -> {
+                if (KNOWLEDGE_BUILD_VERSION.get() == buildVersion) knowledgeBase = candidate;
+            });
             visionLlm = documentImportVisionModel.isEmpty()
                     ? null
                     : new LLMService(apiKey, llmBaseUrl, documentImportVisionModel, documentImportTemperature);
@@ -202,8 +216,13 @@ public class Config {
             DashScopeEmbedding embeddingService = new DashScopeEmbedding(embeddingKey, baseUrl, model, dimensions);
             VectorStore vectorStore = new VectorStore(embeddingService);
             GameDataLoader dataLoader = new GameDataLoader();
-            knowledgeBase = new GameKnowledgeBase(vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
-            knowledgeBase.initializeKnowledgeBase();
+            GameKnowledgeBase candidate = new GameKnowledgeBase(
+                    vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
+            long buildVersion = KNOWLEDGE_BUILD_VERSION.incrementAndGet();
+            if (knowledgeBase == null) knowledgeBase = candidate;
+            candidate.initializeKnowledgeBase(() -> {
+                if (KNOWLEDGE_BUILD_VERSION.get() == buildVersion) knowledgeBase = candidate;
+            });
         } catch (Exception e) {
             e.printStackTrace();
         }

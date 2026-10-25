@@ -6,6 +6,7 @@ import com.exai.entity.PluginDescriptionEntry;
 import com.exai.i18n.Lang;
 import com.exai.manager.EditContextManager;
 import com.exai.manager.KnowledgeFileManager;
+import com.exai.manager.KnowledgeIdService;
 import com.exai.manager.KnowledgeManager;
 import com.exai.manager.PluginDescriptionManager;
 import com.exai.utils.MaterialCompat;
@@ -151,6 +152,8 @@ public class KnowledgeBaseGUI {
         ItemMeta meta = item.getItemMeta();
         meta.setDisplayName(Lang.get("gui.kb-item-title", absoluteIndex + 1));
         List<String> lore = new ArrayList<>();
+        lore.add(Lang.get("gui.kb-id", entry.getKnowledgeId() == null
+                ? KnowledgeIdService.documentId(entry) : entry.getKnowledgeId()));
         lore.add(Lang.get("gui.knowledge-question", truncate(entry.getQuestion(), 30)));
         lore.add(Lang.get("gui.knowledge-answer", truncate(entry.getAnswer(), 30)));
         lore.add("");
@@ -250,6 +253,8 @@ public class KnowledgeBaseGUI {
             player.closeInventory();
             player.sendMessage(Lang.get("gui.divider"));
             player.sendMessage(Lang.get("gui.kb-detail-title", absIndex + 1));
+            player.sendMessage(Lang.get("gui.kb-id", entry.getKnowledgeId() == null
+                    ? KnowledgeIdService.documentId(entry) : entry.getKnowledgeId()));
             player.sendMessage(Lang.get("gui.knowledge-question", entry.getQuestion()));
             player.sendMessage(Lang.get("gui.knowledge-answer", entry.getAnswer()));
             player.sendMessage(Lang.get("gui.divider"));

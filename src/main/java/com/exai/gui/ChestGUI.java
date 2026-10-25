@@ -22,6 +22,7 @@ public class ChestGUI {
     public static final int SLOT_INFO = 40;
     public static final int SLOT_HISTORY = 41;
     public static final int SLOT_KB = 42;
+    public static final int SLOT_RAG_DATASET = 43;
 
     public static String getGUI_TITLE() {
         return Config.config.getString("gui.title", Lang.get("gui.default-title", Config.assistantName));
@@ -42,6 +43,7 @@ public class ChestGUI {
             inventory.setItem(SLOT_REVIEW, createReviewButton());
             inventory.setItem(SLOT_HISTORY, createHistoryButton());
             inventory.setItem(SLOT_KB, createKnowledgeBaseButton());
+            inventory.setItem(SLOT_RAG_DATASET, createRagDatasetButton());
         }
 
         player.openInventory(inventory);
@@ -122,6 +124,18 @@ public class ChestGUI {
         meta.setLore(java.util.Arrays.asList(
                 Lang.get("gui.kb-lore1"),
                 Lang.get("gui.kb-lore2")
+        ));
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private static ItemStack createRagDatasetButton() {
+        ItemStack item = new ItemStack(Material.CHEST);
+        ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName(Lang.get("gui.rag-dataset-button"));
+        meta.setLore(java.util.Arrays.asList(
+                Lang.get("gui.rag-dataset-button-lore1"),
+                Lang.get("gui.rag-dataset-button-lore2", Config.storageType.toUpperCase())
         ));
         item.setItemMeta(meta);
         return item;

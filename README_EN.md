@@ -1,62 +1,42 @@
 # ExAI — AI Assistant Plugin for Minecraft
 
-[![Version](https://img.shields.io/badge/version-1.0.6-blue)](https://github.com/Crossroadscodes/MC-ExAI/releases/tag/v1.0.6)
+[![Version](https://img.shields.io/badge/version-1.0.7-blue)](https://github.com/Crossroadscodes/MC-ExAI/releases/tag/v1.0.7)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **Languages / 语言**: [简体中文](README.md) · [English](README_EN.md)
 
-ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It supports public-chat auto-replies, in-game GUI conversations, and a community-curated knowledge base with RAG retrieval.
+ExAI is an LLM-powered AI assistant plugin for Minecraft servers. It answers players' questions using a server-specific knowledge base built collaboratively by players and administrators.
 
-v1.0.6 improves 1.21 compatibility, uses one complete Q&A per vector document, and adds web administrator authentication, password hashing, and HTTPS support. Compilation against the 1.21.4 API has been verified; other 1.21 versions still require runtime testing.
+What's new in v1.0.7:
+
+- Added RAG system evaluation.
+- Improved the CLI frontend.
+- Improved answer refusal logic.
 
 ---
 
 ## Features
 
-### 1. Public-chat auto-reply
-- Listens to player chat and detects question keywords (`?`, `how`, `what`, `why`, etc.)
-- Generates AI replies asynchronously and broadcasts them to chat
-- Configurable cooldown to prevent spam
-- **Anti-spam**: when the knowledge base has nothing to ground an answer, the AI's "sorry, no relevant info" reply is *not* broadcast — no more noise in chat
-- Optional suffix to guide players to the GUI for deeper conversation
+### 1. Intelligent answers to player questions
 
-### 2. GUI chat system
-- Open the main menu via `/exai opengui` (or your custom ESC menu)
-- Click **Start Chat** to enter single-turn dialogue mode
-- One-on-one with the AI for richer answers
-- Cooldown state shown live on the button
+- Listens to player chat, detects question keywords, generates AI answers asynchronously, and broadcasts them to public chat. Includes a configurable cooldown and anti-spam protection.
+- Players can also ask the AI questions through a chest GUI for automated, around-the-clock assistance.
 
-### 3. RAG knowledge retrieval
-- Vector similarity matching for relevant documents
-- Category prediction (location / quest / item / skill / NPC / general)
-- Similarity threshold filtering to keep answer quality
-- Knowledge is chunked as three complete Q&A pairs per vector document, preventing questions and answers from being split apart during retrieval
-- Configurable OpenAI-compatible Embedding endpoint, API key, model, and dimensions; defaults to DashScope `text-embedding-v3` (1024-dim)
-- **Reduced hallucination**: prompts strictly enforce "answer only from the knowledge base, otherwise refuse", with the strongest constraint placed last (recency effect)
-- Tunable answer `llm.temperature` (lower = stricter) and `knowledge.maxDocs` (fewer injected docs = less chance of stitching together a wrong answer)
+### 2. Knowledge retrieval (RAG)
 
-### 4. Player knowledge contributions
-- Submit Q&A via a pre-filled book (`Q: ... A: ...`)
-- No complex commands to memorize
-- Configurable per-player pending submission cap
-- **AI pre-review** (`knowledge.playerSubmitReview`): submissions are first judged by the AI for fitness, filtering jokes / ads / off-topic / clearly wrong content; only passing ones enter the OP review queue
-- **Fail-closed**: if the AI service is unavailable, the submission is blocked with a "try again later" message — the knowledge base is never polluted
-- During async review the book is only consumed if it's still in the main hand, so other items can't be deleted by accident
-- Pending entries are reviewed in a paginated GUI, showing their source, answerer, and thanked state
-- Approvals write entries to the knowledge base and can issue Vault currency or custom-item rewards; rejections remove them from the queue
+- Operators build a vector knowledge base with server-specific information, supplying the AI with knowledge it would otherwise lack.
+- Players can contribute questions and answers to the shared knowledge base. Administrators can approve submissions and issue configurable rewards.
 
-### 5. Auto knowledge collection 🆕
-- Watches the public-chat flow "player asks → someone answers → (asker thanks)" and harvests it into knowledge
-- The AI makes a binary, context-aware pre-review (no scoring), filtering joking / off-topic / meaningless replies
-- A "thanks" from the asker within the thanks window acts as a positive hint and triggers review immediately
-- Passing Q&A enters the review queue tagged with an "auto-collected" source and a "thanked" flag for OP review
-- Does not count against the per-player submission cap; online reviewers can be notified on new entries
-- Runs independently of the public-chat AI broadcast toggle; controlled by `knowledge.autoCollect.enabled`
+### 3. Automatic knowledge collection
 
-### 6. Web administration and CLI (testing)
-- Optional local-only web console for configuration and knowledge-base management
-- Web CLI provides plugin configuration tools, multi-turn sessions, history, and rewind support
-- **Testing status**: the Web CLI is still experimental. Validate it on a test server before using it in production.
+- Watches public-chat conversations following the pattern “player asks → someone answers → (asker thanks)” and collects potential knowledge.
+- The AI performs a context-aware, pass/fail preliminary review (without scoring) to filter out jokes, unserious replies, and meaningless content.
+- Passing Q&A pairs are tagged and added to the pending queue for an operator to review.
+
+### 4. Web CLI
+
+- Provides function-calling tools for editing server plugin configurations, with session management and conversation rewind support.
+- Still in testing and may carry risks. Feedback is welcome.
 
 ---
 
@@ -64,23 +44,20 @@ v1.0.6 improves 1.21 compatibility, uses one complete Q&A per vector document, a
 
 ### Requirements
 
-- Minecraft Spigot/Paper **1.12.2+**
-- Java **8+**
-- **MySQL 5.7+** — only when `storage.type: mysql`; not needed in `yml` mode
-- **Vault** — optional, for currency rewards
+- Minecraft Spigot server 1.12.2+
+- Java 8+
+- MySQL 5.7+ (only required for `storage.type: mysql`; not needed in `yml` mode)
 
 ### Steps
 
-1. Drop `ExAI.jar` into the `plugins/` folder
-2. Restart the server once — the plugin generates default configs
-3. Edit `plugins/ExAI/config.yml`:
-   - Pick `storage.type`: `yml` (default, no DB) or `mysql`
-   - If `mysql`, fill in `storage-data` MySQL credentials
-   - Set your **LLM API key** (`llm.apiKey`, default Aliyun DashScope)
-   - Configure `embedding` separately when your Embedding provider, API key, model, or dimensions differ from the chat LLM
-   - (Optional) Enable `webui.enabled` to access the local web console at `http://127.0.0.1:<port>`
-4. (Optional) Edit `plugins/ExAI/knowledge.yml` to seed the knowledge base
-5. Run `/exai reload`
+1. Download `ExAI.jar` and place it in the `plugins` directory.
+2. Restart the server. The plugin will generate its default configuration.
+3. Edit `config.yml`:
+   - Choose `storage.type`: `yml` (default, no database required) or `mysql`.
+   - For `mysql`, enter your MySQL connection details under `storage-data`.
+   - Set your LLM API key (Alibaba Cloud DashScope).
+4. Optionally, edit `knowledge.yml` to add game knowledge.
+5. Run `/exai reload` to reload the configuration.
 
 ---
 
@@ -202,6 +179,15 @@ plugins/ExAI/
 | `/exai opengui` | everyone | Open the ExAI menu |
 | `/exai reload` | OP | Reload plugin config |
 | `/exai question <player> <q>` | OP | Push a question to a player (for testing) |
+| `/exai rag ids` | `exai.op` | Fill missing semantic knowledge IDs |
+| `/exai rag idregen <ID>` | `exai.op` | Regenerate an ID and update test references |
+| `/exai rag dataset` | `exai.op` | Open the standalone RAG dataset manager and annotation GUI |
+| `/exai rag test` | `exai.op` | Run retrieval and answer-quality evaluation asynchronously |
+| `/exai rag status` | `exai.op` | Show ID/evaluation progress |
+| `/exai rag cancel` | `exai.op` | Request cancellation of the active evaluation |
+| `/exai rag report` | `exai.op` | Show the latest summary and report path |
+
+When a knowledge entry has no `id`, ExAI uses the configured LLM during startup, reload, and post-add rebuilds to generate a stable English `snake_case` ID. If the model is unavailable, a temporary `legacy_` hash ID keeps RAG operational and the plugin retries later. Administrators can manage the dataset from the main GUI's RAG dataset button or `/exai rag dataset`, and can still use `Shift+Right-click` on chat history to annotate a log. Click the question, reference answer, or knowledge IDs and enter the value in chat; the annotation panel reopens automatically. YAML mode stores cases in `plugins/ExAI/evaluation/test-set.yml`; MySQL mode uses the `exai_evaluation_case` table, and the two datasets remain separate. Detailed reports are stored under `plugins/ExAI/evaluation/results/`.
 
 Permission node: `exai.op` (knowledge review).
 

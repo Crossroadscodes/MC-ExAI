@@ -2,6 +2,9 @@ package com.exai.gui;
 
 import com.exai.config.Config;
 import com.exai.entity.LogEntry;
+import com.exai.evaluation.EvaluationAnnotationService;
+import com.exai.evaluation.EvaluationCase;
+import com.exai.evaluation.EvaluationTestStore;
 import com.exai.i18n.Lang;
 import com.exai.manager.EditContextManager;
 import com.exai.manager.KnowledgeManager;
@@ -21,6 +24,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.HashSet;
+import java.util.Set;
 
 public class ConversationHistoryGUI {
     private static final int GUI_SIZE = 45;
@@ -45,6 +50,18 @@ public class ConversationHistoryGUI {
         showPage(player, 0);
     }
 
+    public static void reopen(Player player) {
+        if (!Config.hasOpPermission(player)) {
+            player.sendMessage(Lang.get("gui.review-no-permission"));
+            return;
+        }
+        int total = DataUtils.getLogTotalCount();
+        int totalPages = Math.max(1, (int) Math.ceil((double) total / PAGE_SIZE));
+        int page = Math.max(0, Math.min(currentPages.getOrDefault(player.getUniqueId(), 0), totalPages - 1));
+        currentPages.put(player.getUniqueId(), page);
+        showPage(player, page);
+    }
+
     private static void showPage(Player player, int page) {
         int total = DataUtils.getLogTotalCount();
         int totalPages = (int) Math.ceil((double) total / PAGE_SIZE);
@@ -53,10 +70,16 @@ public class ConversationHistoryGUI {
         Inventory inventory = Bukkit.createInventory(null, GUI_SIZE, getGUI_TITLE());
         List<LogEntry> entries = DataUtils.getLogPage(page, PAGE_SIZE);
         currentPageEntries.put(player.getUniqueId(), entries);
+        Set<String> annotated = new HashSet<>();
+        for (EvaluationCase item : EvaluationTestStore.readAll()) {
+            annotated.add(item.getSourceLogFingerprint());
+        }
 
         for (int i = 0; i < PAGE_SIZE; i++) {
             if (i < entries.size()) {
-                inventory.setItem(i, createLogItem(entries.get(i), i));
+                LogEntry entry = entries.get(i);
+                inventory.setItem(i, createLogItem(entry, i,
+                        annotated.contains(EvaluationAnnotationService.logFingerprint(entry))));
             }
         }
 
@@ -68,13 +91,15 @@ public class ConversationHistoryGUI {
         player.openInventory(inventory);
     }
 
-    private static ItemStack createLogItem(LogEntry entry, int index) {
+    private static ItemStack createLogItem(LogEntry entry, int index, boolean annotated) {
         ItemStack item = new ItemStack(Material.PAPER);
         ItemMeta meta = item.getItemMeta();
         meta.setDisplayName(Lang.get("gui.history-item-title", index + 1, entry.getPlayerName()));
         List<String> lore = new ArrayList<>();
         lore.add(Lang.get("gui.history-time", entry.getCreateTime()));
         lore.add(Lang.get("gui.history-source", entry.getSource() == null ? "" : entry.getSource()));
+        lore.add(Lang.get("gui.history-rag-status", entry.getRagStatus().name()));
+        lore.add(annotated ? Lang.get("gui.history-test-marked") : Lang.get("gui.history-test-unmarked"));
         lore.add("");
         lore.add(Lang.get("gui.knowledge-question", truncate(entry.getPlayerInput(), 30)));
         lore.add(Lang.get("gui.knowledge-answer", truncate(entry.getAiResponse(), 30)));
@@ -82,6 +107,7 @@ public class ConversationHistoryGUI {
         lore.add(Lang.get("gui.history-left-click"));
         lore.add(Lang.get("gui.history-right-click"));
         lore.add(Lang.get("gui.history-shift-click"));
+        lore.add(Lang.get("gui.history-shift-right-click"));
         meta.setLore(lore);
         item.setItemMeta(meta);
         return item;
@@ -162,13 +188,17 @@ public class ConversationHistoryGUI {
         }
     }
 
-    public static void handleRightClick(Player player, int slot) {
+    public static void handleRightClick(Player player, int slot, boolean shift) {
         UUID uuid = player.getUniqueId();
         int page = currentPages.getOrDefault(uuid, 0);
         if (slot >= 0 && slot < PAGE_SIZE) {
             List<LogEntry> entries = currentPageEntries.get(uuid);
             if (entries == null || slot >= entries.size()) return;
             LogEntry entry = entries.get(slot);
+            if (shift) {
+                RagAnnotationGUI.open(player, entry);
+                return;
+            }
             DataUtils.deleteLogAsync(entry.getId());
             player.sendMessage(Lang.get("gui.history-deleted", Config.assistantName, entry.getId()));
             showPage(player, page);

@@ -58,6 +58,14 @@ embedding:
 assistant:
   name: "ExAI"
 
+# RAG 离线评估：裁判复用 llm 配置，并以温度 0 调用。
+evaluation:
+  judge:
+    # 正确性、忠实性、相关性均达到此分数（满分 5）才算通过
+    passScore: 4
+  # plugins/ExAI/evaluation/results/ 中保留的最近报告数
+  resultRetention: 20
+
 # GUI配置
 gui:
   title: "ExAI 对话助手"

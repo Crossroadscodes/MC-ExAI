@@ -5,6 +5,8 @@ import com.exai.gui.ConversationHistoryGUI;
 import com.exai.gui.KnowledgeBaseGUI;
 import com.exai.gui.KnowledgeReviewGUI;
 import com.exai.gui.KnowledgeSubmitGUI;
+import com.exai.gui.RagAnnotationGUI;
+import com.exai.gui.RagDatasetGUI;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -45,6 +47,9 @@ public class GUIListener implements Listener {
             } else if (slot == ChestGUI.SLOT_KB) {
                 player.closeInventory();
                 KnowledgeBaseGUI.open(player);
+            } else if (slot == ChestGUI.SLOT_RAG_DATASET) {
+                player.closeInventory();
+                RagDatasetGUI.open(player);
             }
             return;
         }
@@ -76,8 +81,29 @@ public class GUIListener implements Listener {
             if (event.isLeftClick()) {
                 ConversationHistoryGUI.handleLeftClick(player, slot, event.isShiftClick());
             } else if (event.isRightClick()) {
-                ConversationHistoryGUI.handleRightClick(player, slot);
+                ConversationHistoryGUI.handleRightClick(player, slot, event.isShiftClick());
             }
+            return;
+        }
+
+        if (title.equals(RagAnnotationGUI.getGUI_TITLE())) {
+            event.setCancelled(true);
+            ItemStack clicked = event.getCurrentItem();
+            if (clicked == null) {
+                return;
+            }
+            RagAnnotationGUI.handleClick(player, event.getRawSlot());
+            return;
+        }
+
+        if (title.equals(RagDatasetGUI.getGUI_TITLE())) {
+            event.setCancelled(true);
+            ItemStack clicked = event.getCurrentItem();
+            if (clicked == null) {
+                return;
+            }
+            RagDatasetGUI.handleClick(player, event.getRawSlot(),
+                    event.isRightClick(), event.isShiftClick());
             return;
         }
 

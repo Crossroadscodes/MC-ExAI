@@ -6,6 +6,9 @@ import com.exai.data.DataContainer;
 import com.exai.data.KnowledgeQueue;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.ReviewResult;
+import com.exai.evaluation.EvaluationAnnotationService;
+import com.exai.evaluation.EvaluationCase;
+import com.exai.evaluation.EvaluationTestStore;
 import com.exai.i18n.Lang;
 import com.exai.manager.EditContextManager;
 import com.exai.manager.KnowledgeFileManager;
@@ -40,6 +43,8 @@ public class KnowledgeListener implements Listener {
             handleHistoryPromoteBook(event, player, meta);
         } else if (displayName.equals(Lang.get("book.kb-edit-title"))) {
             handleKbEditBook(event, player, meta);
+        } else if (displayName.equals(Lang.get("book.rag-test-title"))) {
+            handleRagTestBook(player, meta);
         }
     }
 
@@ -177,6 +182,23 @@ public class KnowledgeListener implements Listener {
         player.sendMessage(Lang.get("gui.divider-green"));
         player.sendMessage(Lang.get("book.kb-edit-success", Config.assistantName, ctx.targetId + 1));
         player.sendMessage(Lang.get("gui.divider-green"));
+    }
+
+    private void handleRagTestBook(Player player, BookMeta meta) {
+        EditContextManager.Context ctx = EditContextManager.get(player);
+        if (ctx == null || ctx.type != EditContextManager.Type.RAG_TEST_EDIT || ctx.targetKey == null) {
+            player.sendMessage(Lang.get("book.rag-test-invalid"));
+            return;
+        }
+        EvaluationCase parsed = EvaluationAnnotationService.parse(joinPages(meta.getPages()));
+        if (parsed == null) {
+            player.sendMessage(Lang.get("book.rag-test-invalid"));
+            return;
+        }
+        EvaluationCase saved = EvaluationTestStore.upsert(ctx.targetKey, parsed);
+        EditContextManager.clear(player);
+        player.getInventory().getItemInMainHand().setAmount(0);
+        player.sendMessage(Lang.get("book.rag-test-saved", saved.getId()));
     }
 
     private String joinPages(List<String> pages) {

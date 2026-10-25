@@ -4,6 +4,8 @@ import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.LogEntry;
 import com.exai.entity.PendingReward;
 import com.exai.entity.PluginDescriptionEntry;
+import com.exai.entity.RagStatus;
+import com.exai.evaluation.EvaluationCase;
 
 import java.util.List;
 
@@ -28,13 +30,21 @@ public interface DataStorage {
     boolean isPendingKnowledgeDuplicate(String question);
 
     void insertLog(String playerName, String playerInput, String aiResponse,
-                   String documentId, String source);
+                   String documentId, String source, RagStatus ragStatus);
 
     int getLogTotalCount();
 
     List<LogEntry> getLogPage(int page, int pageSize);
 
     void deleteLog(int id);
+
+    List<EvaluationCase> readEvaluationCases();
+
+    EvaluationCase upsertEvaluationCase(String sourceFingerprint, EvaluationCase input);
+
+    boolean deleteEvaluationCase(String caseId);
+
+    int replaceEvaluationKnowledgeId(String oldId, String newId);
 
     /** 为离线提交者暂存待领取的物品奖励与登录提示消息（按传入顺序追加）。 */
     void addPendingRewards(String playerName, List<String> items, List<String> messages);

@@ -6,10 +6,18 @@ import com.exai.data.DataContainer;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.PluginDescriptionEntry;
 import com.exai.manager.KnowledgeFileManager;
+import com.exai.manager.KnowledgeIdService;
 import com.exai.manager.PluginDescriptionManager;
 import com.exai.manager.PluginHelpProbe;
+import com.exai.evaluation.RagEvaluationService;
+import com.exai.web.tool.ToolContext;
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
 import com.google.gson.reflect.TypeToken;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -23,6 +31,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.StringReader;
 import java.lang.reflect.Type;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
@@ -39,6 +48,7 @@ import java.util.Map;
 import java.util.Base64;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 
@@ -109,6 +119,10 @@ public class WebServer {
             createProtectedContext("/api/cli/session", WebServer::handleCliSession);
             createProtectedContext("/api/cli/stream", WebServer::handleCliStream);
             createProtectedContext("/api/cli", WebServer::handleCli);
+            createProtectedContext("/api/tools/execute", WebServer::handleToolExecute);
+            createProtectedContext("/api/tools/confirm", WebServer::handleToolConfirm);
+            createProtectedContext("/api/tools/cancel", WebServer::handleToolCancel);
+            createProtectedContext("/api/tools", WebServer::handleTools);
             createProtectedContext("/api/plugins/scan", WebServer::handlePluginsScan);
             createProtectedContext("/api/plugins/gen-desc-all", WebServer::handlePluginGenDescAll);
             createProtectedContext("/api/plugins/gen-desc", WebServer::handlePluginGenDesc);
@@ -255,12 +269,16 @@ public class WebServer {
     }
 
     private static void createProtectedContext(String path, HttpHandler handler) {
-        server.createContext(path, ex -> {
+        server.createContext(path, protectedHandler(handler));
+    }
+
+    static HttpHandler protectedHandler(HttpHandler handler) {
+        return ex -> {
             if (!authorize(ex)) {
                 return;
             }
             handler.handle(ex);
-        });
+        };
     }
 
     private static boolean authorize(HttpExchange ex) throws IOException {
@@ -695,6 +713,112 @@ public class WebServer {
         }
     }
 
+    // ====== Internal tools exposed through the existing authenticated transport ======
+
+    static void handleTools(HttpExchange ex) throws IOException {
+        handleToolRequest(ex, "/api/tools", "GET", request -> {
+            JsonObject result = new JsonObject();
+            result.addProperty("ok", true);
+            result.add("tools", PluginConfigTool.toolSchemas());
+            return result;
+        });
+    }
+
+    static void handleToolExecute(HttpExchange ex) throws IOException {
+        handleToolRequest(ex, "/api/tools/execute", "POST", request -> {
+            String name = requiredToolString(request, "name");
+            JsonObject arguments = optionalToolObject(request, "arguments");
+            ToolContext context = externalToolContext(request);
+            return PluginConfigTool.executeTool(context, name, arguments);
+        });
+    }
+
+    static void handleToolConfirm(HttpExchange ex) throws IOException {
+        handleToolRequest(ex, "/api/tools/confirm", "POST", request ->
+                PluginConfigTool.confirmPendingResult(requiredToolString(request, "confirmation_id")));
+    }
+
+    static void handleToolCancel(HttpExchange ex) throws IOException {
+        handleToolRequest(ex, "/api/tools/cancel", "POST", request ->
+                PluginConfigTool.cancelPendingResult(requiredToolString(request, "confirmation_id")));
+    }
+
+    private static void handleToolRequest(HttpExchange ex, String path, String method,
+                                          Function<JsonObject, JsonObject> action) throws IOException {
+        try {
+            // JDK contexts match prefixes; reject suffixes rather than executing a tool on another URL.
+            if (!path.equals(ex.getRequestURI().getPath())) {
+                sendError(ex, 404, "Not Found");
+                return;
+            }
+            if (!method.equalsIgnoreCase(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Allow", method);
+                sendError(ex, 405, "Method Not Allowed");
+                return;
+            }
+            JsonObject request = "GET".equals(method) ? new JsonObject() : parseToolRequest(readBody(ex));
+            sendJson(ex, 200, action.apply(request));
+        } catch (ToolRequestException e) {
+            sendError(ex, 400, e.getMessage());
+        } catch (RuntimeException e) {
+            java.util.logging.Logger.getLogger(WebServer.class.getName())
+                    .log(java.util.logging.Level.WARNING, "Tool API request failed", e);
+            sendError(ex, 500, "Tool API request failed");
+        } finally {
+            ex.close();
+        }
+    }
+
+    private static JsonObject parseToolRequest(String body) {
+        try (JsonReader reader = new JsonReader(new StringReader(body))) {
+            reader.setLenient(false);
+            if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+                throw new ToolRequestException("Request must be a JSON object");
+            }
+            JsonElement parsed = GSON.getAdapter(JsonElement.class).read(reader);
+            if (reader.peek() != JsonToken.END_DOCUMENT) throw new ToolRequestException("Invalid JSON request");
+            return parsed.getAsJsonObject();
+        } catch (JsonParseException | IOException e) {
+            throw new ToolRequestException("Invalid JSON request");
+        }
+    }
+
+    private static JsonObject optionalToolObject(JsonObject request, String field) {
+        if (!request.has(field)) return new JsonObject();
+        JsonElement value = request.get(field);
+        if (!value.isJsonObject()) throw new ToolRequestException(field + " must be an object");
+        return value.getAsJsonObject();
+    }
+
+    private static String requiredToolString(JsonObject request, String field) {
+        JsonElement value = request.get(field);
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()
+                || value.getAsString().trim().isEmpty()) {
+            throw new ToolRequestException(field + " must be a non-empty string");
+        }
+        return value.getAsString();
+    }
+
+    static ToolContext externalToolContext(JsonObject request) {
+        JsonObject context = optionalToolObject(request, "context");
+        String cwd = "";
+        if (context.has("cwd")) {
+            JsonElement value = context.get("cwd");
+            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+                throw new ToolRequestException("context.cwd must be a string");
+            }
+            cwd = value.getAsString();
+        }
+        // HTTP callers cannot attach changes to a Web CLI session or rollback turn.
+        return new ToolContext(cwd, "", 0L);
+    }
+
+    private static final class ToolRequestException extends IllegalArgumentException {
+        ToolRequestException(String message) {
+            super(message);
+        }
+    }
+
     private static Map<String, String> query(HttpExchange ex) {
         Map<String, String> m = new LinkedHashMap<>();
         String q = ex.getRequestURI().getRawQuery();
@@ -937,6 +1061,7 @@ public class WebServer {
                 KnowledgeEntry e = all.get(i);
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("index", i);
+                m.put("id", e.getKnowledgeId());
                 m.put("question", e.getQuestion());
                 m.put("answer", e.getAnswer());
                 entries.add(m);
@@ -1146,6 +1271,9 @@ public class WebServer {
                 field("knowledge.maxDocs", "单次最多注入文档数", "Max docs per answer", T_INT),
                 field("knowledge.maxPendingKnowledgePerPlayer", "每玩家最多待审核数", "Max pending per player", T_INT),
                 field("knowledge.playerSubmitReview.enabled", "玩家提交 AI 初审", "AI pre-review on player submit", T_BOOLEAN)));
+        groups.add(group("RAG 评估", "RAG evaluation",
+                field("evaluation.judge.passScore", "裁判通过分数 (0~5)", "Judge pass score (0-5)", T_INT),
+                field("evaluation.resultRetention", "保留报告数量", "Reports to retain", T_INT)));
         groups.add(group("公屏自动采集", "Auto-collect from chat",
                 field("knowledge.autoCollect.enabled", "启用自动采集", "Enable auto-collect", T_BOOLEAN),
                 field("knowledge.autoCollect.answerWindowSeconds", "回答时间窗(秒)", "Answer window (s)", T_INT),
@@ -1201,6 +1329,9 @@ public class WebServer {
 
     @SuppressWarnings("unchecked")
     private static void applyConfig(String body) {
+        if (KnowledgeIdService.isRunning() || RagEvaluationService.isRunning()) {
+            throw new IllegalStateException("知识 ID 或 RAG 评估任务运行期间不能重载配置");
+        }
         Type type = new TypeToken<Map<String, Object>>() {}.getType();
         Map<String, Object> req = GSON.fromJson(body, type);
         if (req == null) {

@@ -6,6 +6,8 @@ import lombok.Setter;
 @Getter
 @Setter
 public class KnowledgeEntry {
+    /** 由大模型生成并持久化的稳定英文语义 ID。 */
+    private String knowledgeId;
     private String question;
     private String answer;
     private String submitter;

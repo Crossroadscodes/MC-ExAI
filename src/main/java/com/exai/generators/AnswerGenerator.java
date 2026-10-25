@@ -4,7 +4,11 @@ import com.exai.config.Config;
 import com.exai.entity.Answer;
 import com.exai.entity.GameDocument;
 import com.exai.entity.PlayerQuestion;
+import com.exai.entity.RagResult;
+import com.exai.entity.RagStatus;
+import com.exai.entity.RetrievedDocument;
 import com.exai.i18n.Lang;
+import com.exai.manager.GameKnowledgeBase;
 import com.exai.service.LLMService;
 
 import java.util.ArrayList;
@@ -19,27 +23,44 @@ public class AnswerGenerator {
     }
 
     public Answer generateAnswer(PlayerQuestion question, Boolean isFormatWithLineBreak) {
-        if (llmService == null || !llmService.isConfigured()) {
-            return unavailableAnswer(isFormatWithLineBreak);
-        }
-        List<GameDocument> relevantDocs = Config.knowledgeBase.retrieveRelevantDocs(
-                question.getQuestion(), question.getContext());
-
-        String prompt = buildSimplePrompt(question, relevantDocs);
-        String rawAnswer = llmService.generateResponse(prompt);
-        return parseResponse(rawAnswer, relevantDocs, isFormatWithLineBreak);
+        return generateRagAnswer(question, false, isFormatWithLineBreak).getAnswer();
     }
 
     public Answer generateBrodcastAnswer(PlayerQuestion question, Boolean isFormatWithLineBreak) {
-        if (llmService == null || !llmService.isConfigured()) {
-            return unavailableAnswer(isFormatWithLineBreak);
-        }
-        List<GameDocument> relevantDocs = Config.knowledgeBase.retrieveRelevantDocs(
-                question.getQuestion(), question.getContext());
+        return generateRagAnswer(question, true, isFormatWithLineBreak).getAnswer();
+    }
 
-        String prompt = buildBrodcastPrompt(question, relevantDocs);
+    /** 线上问答与离线评估共用的完整 RAG 路径。 */
+    public RagResult generateRagAnswer(PlayerQuestion question, boolean broadcast,
+                                       Boolean isFormatWithLineBreak) {
+        return generateRagAnswer(question, broadcast, isFormatWithLineBreak, Config.knowledgeBase);
+    }
+
+    public RagResult generateRagAnswer(PlayerQuestion question, boolean broadcast,
+                                       Boolean isFormatWithLineBreak, GameKnowledgeBase knowledgeBase) {
+        if (llmService == null || !llmService.isConfigured()) {
+            return new RagResult(unavailableAnswer(isFormatWithLineBreak), new ArrayList<>(), 0L, 0L);
+        }
+        long retrievalStart = System.currentTimeMillis();
+        List<RetrievedDocument> retrieved = knowledgeBase.retrieveRelevantWithScores(
+                question.getQuestion(), question.getContext());
+        long retrievalMillis = System.currentTimeMillis() - retrievalStart;
+        List<GameDocument> relevantDocs = retrieved.stream()
+                .map(RetrievedDocument::getDocument)
+                .collect(Collectors.toList());
+        if (relevantDocs == null || relevantDocs.isEmpty()) {
+            return new RagResult(noKnowledgeAnswer(isFormatWithLineBreak), retrieved,
+                    retrievalMillis, 0L);
+        }
+
+        String prompt = broadcast
+                ? buildBrodcastPrompt(question, relevantDocs)
+                : buildSimplePrompt(question, relevantDocs);
+        long generationStart = System.currentTimeMillis();
         String rawAnswer = llmService.generateResponse(prompt);
-        return parseResponse(rawAnswer, relevantDocs, isFormatWithLineBreak);
+        long generationMillis = System.currentTimeMillis() - generationStart;
+        return new RagResult(parseResponse(rawAnswer, relevantDocs, isFormatWithLineBreak),
+                retrieved, retrievalMillis, generationMillis);
     }
 
     private Answer unavailableAnswer(Boolean isFormatWithLineBreak) {
@@ -50,6 +71,20 @@ public class AnswerGenerator {
         answer.setConfidence(0.0);
         answer.setSuggestedAction(Lang.get("action.default"));
         answer.setUnknown(true);
+        answer.setStatus(RagStatus.MODEL_ERROR);
+        return answer;
+    }
+
+    /** 没有检索到知识时直接拒答，不调用大模型。 */
+    private Answer noKnowledgeAnswer(Boolean isFormatWithLineBreak) {
+        Answer answer = new Answer();
+        String message = Lang.get("service.llm.no-knowledge");
+        answer.setAnswer(Boolean.TRUE.equals(isFormatWithLineBreak) ? formatWithLineBreak(message) : message);
+        answer.setSources(new ArrayList<>());
+        answer.setConfidence(0.0);
+        answer.setSuggestedAction(Lang.get("action.default"));
+        answer.setUnknown(true);
+        answer.setStatus(RagStatus.NO_DOCUMENT);
         return answer;
     }
 
@@ -133,7 +168,10 @@ public class AnswerGenerator {
     private Answer parseResponse(String response, List<GameDocument> sources, Boolean isFormatWithLineBreak) {
         Answer answer = new Answer();
         // 在换行格式化之前判定，避免插入的换行把拒答标记切断
-        answer.setUnknown(isNoAnswer(response));
+        RagStatus status = classifyStatus(response);
+        answer.setStatus(status);
+        answer.setUnknown(status != RagStatus.ANSWERED);
+        if (response == null) response = "";
         if (isFormatWithLineBreak) {
             response = formatWithLineBreak(response);
         }
@@ -159,18 +197,21 @@ public class AnswerGenerator {
     }
 
     /** 命中任一拒答标记（如「找不到相关信息」）即视为 AI 无法作答。response 为空也视为无法作答。 */
-    private boolean isNoAnswer(String response) {
+    private RagStatus classifyStatus(String response) {
         if (response == null || response.trim().isEmpty()) {
-            return true;
+            return RagStatus.MODEL_ERROR;
+        }
+        if (response.equals(Lang.get("service.llm.empty"))
+                || response.equals(Lang.get("service.llm.error"))
+                || response.equals(Lang.get("service.llm.not-configured"))) {
+            return RagStatus.MODEL_ERROR;
         }
         String lower = response.toLowerCase();
         for (String marker : Lang.get("prompt.no-answer-marker").split(",")) {
             String m = marker.trim().toLowerCase();
-            if (!m.isEmpty() && lower.contains(m)) {
-                return true;
-            }
+            if (!m.isEmpty() && lower.contains(m)) return RagStatus.MODEL_REFUSED;
         }
-        return false;
+        return RagStatus.ANSWERED;
     }
 
     private String getAction(String response) {

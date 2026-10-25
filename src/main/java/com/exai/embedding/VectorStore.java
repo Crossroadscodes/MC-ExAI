@@ -1,17 +1,17 @@
 package com.exai.embedding;
 
 import com.exai.entity.GameDocument;
-import com.exai.i18n.Lang;
 import lombok.Setter;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
 @Setter
 public class VectorStore {
-    private List<GameDocument> documents = new ArrayList<>();
+    private List<GameDocument> documents = new CopyOnWriteArrayList<>();
     private DashScopeEmbedding embeddingService;
 
     public VectorStore(DashScopeEmbedding embeddingService) {
@@ -22,7 +22,6 @@ public class VectorStore {
         String text = doc.getContent();
         doc.setEmbedding(embeddingService.generateEmbedding(text));
         documents.add(doc);
-        System.out.println(Lang.get("runtime.added-document", doc.getCategory(), doc.getId()));
     }
 
     public List<GameDocument> searchSimilar(double[] queryEmbedding, int topK) {

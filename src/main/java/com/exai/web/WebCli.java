@@ -2,6 +2,7 @@ package com.exai.web;
 
 import com.exai.config.Config;
 import com.exai.service.LLMService;
+import com.exai.web.tool.ToolContext;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
@@ -18,6 +19,8 @@ import java.util.Map;
  * YAML 配置修改；写入前必须先生成预览和确认 ID，再由用户输入 {@code 确认 <id>} 执行。
  */
 public final class WebCli {
+    private static final int MAX_FAILED_PROCESS_CHARS = 2800;
+    private static final int MAX_FAILURE_REASON_CHARS = 700;
 
     private WebCli() {}
 
@@ -208,24 +211,35 @@ public final class WebCli {
     }
 
     private static String doAi(String cwd, String request, String sessionId) {
-        if (!Config.isLlmConfigured()) {
-            throw new CliException("模型 API 未配置，请在 config.yml 的 llm.apiKey 中填写密钥后重载插件。");
-        }
         if (request.trim().isEmpty()) {
             throw new CliException("请输入自然语言需求，例如：帮我找一下远征插件的配置文件有哪些");
         }
         JsonArray history = WebAiSessionStore.history(sessionId);
         long turnId = WebAiSessionStore.beginTurn(sessionId);
-        LLMService.ToolChatResult r = Config.llm.completeWithTools(
-                PluginConfigTool.buildSystemPrompt(cwd),
-                history,
-                request,
-                PluginConfigTool.toolSchemas(),
-                toolExecutor(cwd, sessionId, turnId),
-                0.2,
-                1000,
-                10);
+        FailureTrace trace = new FailureTrace();
+        if (!Config.isLlmConfigured()) {
+            String error = "模型 API 未配置，请在 config.yml 的 llm.apiKey 中填写密钥后重载插件。";
+            saveFailedExchange(sessionId, turnId, request, error, 0, trace);
+            throw new CliException(error);
+        }
+        LLMService.ToolChatResult r;
+        try {
+            r = Config.llm.completeWithTools(
+                    PluginConfigTool.buildSystemPrompt(cwd),
+                    history,
+                    request,
+                    PluginConfigTool.toolSchemas(),
+                    toolExecutor(cwd, sessionId, turnId, trace),
+                    0.2,
+                    1000,
+                    10);
+        } catch (Exception e) {
+            String error = exceptionMessage(e);
+            saveFailedExchange(sessionId, turnId, request, error, 0, trace);
+            throw new CliException("AI 调用失败: " + error);
+        }
         if (!r.isOk()) {
+            saveFailedExchange(sessionId, turnId, request, r.getError(), r.getIterations(), trace);
             throw new CliException("AI 调用失败: " + r.getError());
         }
         WebAiSessionStore.appendExchange(sessionId, turnId, request, r.getContent());
@@ -233,63 +247,188 @@ public final class WebCli {
     }
 
     private static String doAiStream(final String cwd, String request, String sessionId, final StreamSink sink, final List<String> confirmationIds) {
-        if (!Config.isLlmConfigured()) {
-            throw new CliException("模型 API 未配置，请在 config.yml 的 llm.apiKey 中填写密钥后重载插件。");
-        }
         if (request.trim().isEmpty()) {
             throw new CliException("请输入自然语言需求，例如：帮我找一下远征插件的配置文件有哪些");
         }
         JsonArray history = WebAiSessionStore.history(sessionId);
         final long turnId = WebAiSessionStore.beginTurn(sessionId);
-        LLMService.ToolChatResult r = Config.llm.completeWithToolsStreaming(
-                PluginConfigTool.buildSystemPrompt(cwd),
-                history,
-                request,
-                PluginConfigTool.toolSchemas(),
-                toolExecutor(cwd, sessionId, turnId),
-                new LLMService.ToolStreamListener() {
-                    @Override
-                    public void onContentDelta(String text) throws IOException {
-                        sink.delta(text);
-                    }
-
-                    @Override
-                    public void onStatus(String message) throws IOException {
-                        sink.status(message);
-                    }
-
-                    @Override
-                    public void onToolCallStarted(String name) throws IOException {
-                        sink.status("正在调用工具: " + name);
-                    }
-
-                    @Override
-                    public void onToolCallFinished(String name, JsonObject result) throws IOException {
-                        if (result != null && result.has("confirmation_id") && !result.get("confirmation_id").isJsonNull()) {
-                            confirmationIds.add(result.get("confirmation_id").getAsString());
-                            sink.status("已生成修改预览: " + result.get("confirmation_id").getAsString());
-                        } else {
-                            sink.status("工具完成: " + name);
+        final FailureTrace trace = new FailureTrace();
+        if (!Config.isLlmConfigured()) {
+            String error = "模型 API 未配置，请在 config.yml 的 llm.apiKey 中填写密钥后重载插件。";
+            saveFailedExchange(sessionId, turnId, request, error, 0, trace);
+            throw new CliException(error);
+        }
+        LLMService.ToolChatResult r;
+        try {
+            r = Config.llm.completeWithToolsStreaming(
+                    PluginConfigTool.buildSystemPrompt(cwd),
+                    history,
+                    request,
+                    PluginConfigTool.toolSchemas(),
+                    toolExecutor(cwd, sessionId, turnId, trace),
+                    new LLMService.ToolStreamListener() {
+                        @Override
+                        public void onContentDelta(String text) throws IOException {
+                            trace.appendContent(text);
+                            sink.delta(text);
                         }
-                    }
-                },
-                0.2,
-                1000,
-                10);
+
+                        @Override
+                        public void onStatus(String message) throws IOException {
+                            trace.appendStatus(message);
+                            sink.status(message);
+                        }
+
+                        @Override
+                        public void onToolCallStarted(String name) throws IOException {
+                            String status = "正在调用工具: " + name;
+                            trace.appendStatus(status);
+                            sink.status(status);
+                        }
+
+                        @Override
+                        public void onToolCallFinished(String name, JsonObject result) throws IOException {
+                            if (result != null && result.has("confirmation_id") && !result.get("confirmation_id").isJsonNull()) {
+                                confirmationIds.add(result.get("confirmation_id").getAsString());
+                                sink.status("已生成修改预览: " + result.get("confirmation_id").getAsString());
+                            } else {
+                                sink.status("工具完成: " + name);
+                            }
+                        }
+                    },
+                    0.2,
+                    1000,
+                    10);
+        } catch (Exception e) {
+            String error = exceptionMessage(e);
+            saveFailedExchange(sessionId, turnId, request, error, 0, trace);
+            throw new CliException("AI 调用失败: " + error);
+        }
         if (!r.isOk()) {
+            saveFailedExchange(sessionId, turnId, request, r.getError(), r.getIterations(), trace);
             throw new CliException("AI 调用失败: " + r.getError());
         }
         WebAiSessionStore.appendExchange(sessionId, turnId, request, r.getContent());
         return r.getContent();
     }
 
-    private static LLMService.ToolExecutor toolExecutor(final String cwd, final String sessionId, final long turnId) {
+    private static LLMService.ToolExecutor toolExecutor(final String cwd, final String sessionId,
+                                                        final long turnId, final FailureTrace trace) {
+        final ToolContext context = new ToolContext(cwd, sessionId, turnId);
         return new LLMService.ToolExecutor() {
             @Override
             public JsonObject execute(String name, JsonObject arguments) {
-                return PluginConfigTool.executeTool(cwd, name, arguments, sessionId, turnId);
+                trace.appendStatus("正在调用工具: " + name);
+                try {
+                    JsonObject result = PluginConfigTool.executeTool(context, name, arguments);
+                    trace.appendToolResult(name, result);
+                    return result;
+                } catch (RuntimeException e) {
+                    trace.appendStatus("工具失败: " + name + " - " + exceptionMessage(e));
+                    throw e;
+                }
             }
         };
+    }
+
+    private static void saveFailedExchange(String sessionId, long turnId, String request,
+                                           String error, int iterations, FailureTrace trace) {
+        String reason = clipText(error == null || error.trim().isEmpty() ? "未知错误" : error.trim(),
+                MAX_FAILURE_REASON_CHARS);
+        StringBuilder assistant = new StringBuilder();
+        assistant.append("**本轮执行失败**\n\n");
+        assistant.append("错误：").append(reason);
+        if (iterations > 0) {
+            assistant.append("\n\n模型调用轮次：").append(iterations);
+        }
+        String process = trace.snapshot();
+        if (!process.isEmpty()) {
+            assistant.append("\n\n**失败前的执行过程**\n\n").append(process);
+        }
+        WebAiSessionStore.appendExchange(sessionId, turnId, request, assistant.toString());
+    }
+
+    private static String exceptionMessage(Exception e) {
+        String message = e.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? e.getClass().getSimpleName()
+                : message.trim();
+    }
+
+    private static String clipText(String value, int maxChars) {
+        if (value == null) {
+            return "";
+        }
+        return value.length() <= maxChars ? value : value.substring(0, maxChars) + "...";
+    }
+
+    private static final class FailureTrace {
+        private final StringBuilder process = new StringBuilder();
+        private boolean truncated;
+        private String lastStatus;
+
+        synchronized void appendContent(String text) {
+            append(text);
+            if (text != null && !text.isEmpty()) {
+                lastStatus = null;
+            }
+        }
+
+        synchronized void appendStatus(String status) {
+            if (status == null || status.trim().isEmpty()) {
+                return;
+            }
+            String normalized = status.trim();
+            if (normalized.equals(lastStatus)) {
+                return;
+            }
+            if (process.length() > 0 && process.charAt(process.length() - 1) != '\n') {
+                append("\n");
+            }
+            append("[" + normalized + "]\n");
+            lastStatus = normalized;
+        }
+
+        synchronized void appendToolResult(String name, JsonObject result) {
+            try {
+                if (result != null && result.has("confirmation_id") && !result.get("confirmation_id").isJsonNull()) {
+                    appendStatus("已生成修改预览: " + result.get("confirmation_id").getAsString());
+                    return;
+                }
+                if (result != null && result.has("ok") && !result.get("ok").isJsonNull()
+                        && !result.get("ok").getAsBoolean()) {
+                    String detail = result.has("error") && !result.get("error").isJsonNull()
+                            ? result.get("error").getAsString() : "工具返回失败";
+                    appendStatus("工具失败: " + name + " - " + detail);
+                    return;
+                }
+            } catch (RuntimeException ignored) {
+                // Recording diagnostic details must never change the tool call result.
+            }
+            appendStatus("工具完成: " + name);
+        }
+
+        synchronized String snapshot() {
+            String value = process.toString().trim();
+            return truncated ? value + "\n[后续执行过程过长，已截断]" : value;
+        }
+
+        private void append(String text) {
+            if (text == null || text.isEmpty() || truncated) {
+                return;
+            }
+            int remaining = MAX_FAILED_PROCESS_CHARS - process.length();
+            if (remaining <= 0) {
+                truncated = true;
+                return;
+            }
+            if (text.length() <= remaining) {
+                process.append(text);
+            } else {
+                process.append(text, 0, remaining);
+                truncated = true;
+            }
+        }
     }
 
     /** 兼容旧输入：如果用户仍输入 ai <需求>，去掉 ai 前缀后作为自然语言处理。 */

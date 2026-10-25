@@ -144,6 +144,7 @@ public class KnowledgeManager {
                 submitterToUuid.remove(submitterName);
             }
             writeToGameHelp(entry);
+            KnowledgeFileManager.reloadKnowledgeBaseAsync();
             KnowledgeQueue.remove(entry);
         }
     }

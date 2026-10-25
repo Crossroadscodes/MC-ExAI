@@ -2,6 +2,9 @@ package com.exai.web;
 
 import com.exai.ExAI;
 import com.exai.config.Config;
+import com.exai.web.tool.ToolContext;
+import com.exai.web.tool.ToolDefinition;
+import com.exai.web.tool.ToolHandler;
 import com.exai.entity.PluginDescriptionEntry;
 import com.exai.manager.PluginDescriptionManager;
 import com.google.gson.Gson;
@@ -17,6 +20,7 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginDescriptionFile;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
@@ -25,6 +29,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,105 +60,158 @@ public final class PluginConfigTool {
     private static final List<AppliedChange> APPLIED = new ArrayList<>();
     private static boolean appliedLoaded;
 
+    private static final Map<String, ToolDefinition> TOOL_DEFINITIONS = buildToolDefinitions();
+
     private PluginConfigTool() {}
 
-    public static JsonArray toolSchemas() {
-        JsonArray tools = new JsonArray();
-        tools.add(tool("list_plugin_yaml",
+    private static Map<String, ToolDefinition> buildToolDefinitions() {
+        Map<String, ToolDefinition> tools = new LinkedHashMap<>();
+        register(tools, tool("list_plugin_yaml",
                 "List directories and YAML files under the Minecraft plugins directory. Paths are relative to plugins/.",
                 objProps(
                         prop("path", "string", "Directory path relative to plugins/. Empty means plugins root or current cwd.")),
-                new String[]{}));
-        tools.add(tool("list_yaml_keys",
+                new String[]{}),
+                (context, args) -> listPluginYaml(context.getCwd(), args));
+        register(tools, tool("list_yaml_keys",
                 "List immediate child keys under a YAML section. Scalar previews are masked for secret-looking keys.",
                 objProps(
                         prop("file", "string", "YAML file path relative to plugins/."),
                         prop("path", "string", "YAML section path. Empty or omitted means root.")),
-                new String[]{"file"}));
-        tools.add(tool("get_yaml_value",
+                new String[]{"file"}),
+                (context, args) -> listYamlKeys(context.getCwd(), args));
+        register(tools, tool("get_yaml_value",
                 "Get a YAML value by path. Secret-looking paths are masked.",
                 objProps(
                         prop("file", "string", "YAML file path relative to plugins/."),
                         prop("path", "string", "YAML key path.")),
-                new String[]{"file", "path"}));
-        tools.add(tool("search_yaml_keys",
+                new String[]{"file", "path"}),
+                (context, args) -> getYamlValue(context.getCwd(), args));
+        register(tools, tool("search_yaml_keys",
                 "Search YAML key paths by keyword under plugins/. Returns matching file/path previews with secrets masked.",
                 objProps(
                         prop("keyword", "string", "Keyword to search in YAML key paths, e.g. webui, port, language, mysql, reward."),
                         prop("file", "string", "Optional YAML file path relative to plugins/. If omitted, searches YAML files under plugins/ with limits.")),
-                new String[]{"keyword"}));
-        tools.add(tool("list_plugins",
+                new String[]{"keyword"}),
+                (context, args) -> searchYamlKeys(context.getCwd(), args));
+        register(tools, tool("list_plugins",
                 "List plugin JARs found directly under plugins/, including plugins that are not currently loaded. Each result includes loaded to indicate runtime state. Use this first for fuzzy Chinese plugin names so the model can choose the closest candidate.",
                 objProps(prop("include_disabled", "boolean", "Whether to include disabled plugin-description entries.")),
-                new String[]{}));
-        tools.add(tool("search_plugins",
+                new String[]{}),
+                (context, args) -> listPlugins(args));
+        register(tools, tool("search_plugins",
                 "Search installed/scanned plugins by fuzzy name, description, command names/descriptions, and data folder.",
                 objProps(
                         prop("query", "string", "Fuzzy plugin name or description keyword, e.g. 远征, expedition, quest."),
                         prop("include_disabled", "boolean", "Whether to include disabled plugin-description entries.")),
-                new String[]{"query"}));
-        tools.add(tool("get_plugin_metadata",
+                new String[]{"query"}),
+                (context, args) -> searchPlugins(args));
+        register(tools, tool("get_plugin_metadata",
                 "Get metadata and likely YAML config files for one installed/scanned plugin.",
                 objProps(prop("name", "string", "Plugin name or close candidate name.")),
-                new String[]{"name"}));
-        tools.add(tool("find_plugin_files",
+                new String[]{"name"}),
+                (context, args) -> getPluginMetadata(args));
+        register(tools, tool("find_plugin_files",
                 "Find plugin data-folder files by plugin/folder name and optional keyword. Searches from plugins root.",
                 objProps(
                         prop("plugin", "string", "Plugin name or folder name."),
                         prop("keyword", "string", "Optional file/path keyword."),
                         prop("yaml_only", "boolean", "Return only .yml/.yaml files.")),
-                new String[]{}));
-        tools.add(tool("search_yaml_values",
+                new String[]{}),
+                (context, args) -> findPluginFiles(args));
+        register(tools, tool("search_yaml_values",
                 "Search YAML key paths and scalar/list value previews by keyword.",
                 objProps(
                         prop("keyword", "string", "Keyword to search in YAML paths and values, e.g. 佣兵, mercenary."),
                         prop("file", "string", "Optional YAML file path relative to plugins/."),
                         prop("path", "string", "Optional YAML section path to search under.")),
-                new String[]{"keyword"}));
-        tools.add(tool("read_yaml_snippet",
+                new String[]{"keyword"}),
+                (context, args) -> searchYamlValues(context.getCwd(), args));
+        register(tools, tool("read_yaml_snippet",
                 "Read limited raw YAML snippets around a keyword or key path, preserving comments with secrets redacted.",
                 objProps(
                         prop("file", "string", "YAML file path relative to plugins/."),
                         prop("keyword", "string", "Optional raw text keyword to search, including comments."),
                         prop("path", "string", "Optional YAML key path; last segment is used as a key hint."),
                         prop("context_lines", "integer", "Number of lines before/after each match, 0-10.")),
-                new String[]{"file"}));
+                new String[]{"file"}),
+                (context, args) -> readYamlSnippet(context.getCwd(), args));
         JsonObject proposeProps = objProps(
                 prop("file", "string", "YAML file path relative to plugins/."),
                 prop("path", "string", "YAML key path to change."),
                 propAny("value", "New YAML value. Use JSON null when delete is true."),
                 prop("delete", "boolean", "If true, delete the key instead of setting it."),
                 prop("reason", "string", "Short user-facing reason for this change."));
-        tools.add(tool("propose_yaml_set",
+        register(tools, tool("propose_yaml_set",
                 "Propose setting or deleting a YAML config value. This does not write immediately; it returns a confirmation id.",
                 proposeProps,
-                new String[]{"file", "path"}));
-        return tools;
+                new String[]{"file", "path"}),
+                (context, args) -> proposeYamlSet(context.getCwd(), args, context.getSessionId(), context.getTurnId()));
+        return Collections.unmodifiableMap(tools);
+    }
+
+    private static void register(Map<String, ToolDefinition> tools, JsonObject schema, ToolHandler handler) {
+        ToolDefinition definition = new ToolDefinition(schema, handler);
+        if (tools.putIfAbsent(definition.getName(), definition) != null) {
+            throw new IllegalStateException("Duplicate tool: " + definition.getName());
+        }
+    }
+
+    public static JsonArray toolSchemas() {
+        JsonArray schemas = new JsonArray();
+        for (ToolDefinition definition : TOOL_DEFINITIONS.values()) {
+            schemas.add(definition.getSchema());
+        }
+        return schemas;
+    }
+
+    public static List<String> toolNames() {
+        return new ArrayList<>(TOOL_DEFINITIONS.keySet());
+    }
+
+    public static boolean hasTool(String name) {
+        return TOOL_DEFINITIONS.containsKey(name);
+    }
+
+    /** Returns a defensive copy, or null if the tool does not exist. */
+    public static JsonObject toolSchema(String name) {
+        ToolDefinition definition = TOOL_DEFINITIONS.get(name);
+        return definition == null ? null : definition.getSchema();
     }
 
     public static JsonObject executeTool(String cwd, String name, JsonObject args) {
-        return executeTool(cwd, name, args, "", 0L);
+        return executeTool(new ToolContext(cwd, "", 0L), name, args);
     }
 
     public static JsonObject executeTool(String cwd, String name, JsonObject args, String sessionId, long turnId) {
+        return executeTool(new ToolContext(cwd, sessionId, turnId), name, args);
+    }
+
+    public static JsonObject executeTool(ToolContext context, String name, JsonObject arguments) {
+        ToolDefinition definition = TOOL_DEFINITIONS.get(name);
+        if (definition == null) return error("未知工具: " + name, "TOOL_NOT_FOUND");
         try {
-            if ("list_plugin_yaml".equals(name)) return listPluginYaml(cwd, args);
-            if ("list_yaml_keys".equals(name)) return listYamlKeys(cwd, args);
-            if ("get_yaml_value".equals(name)) return getYamlValue(cwd, args);
-            if ("search_yaml_keys".equals(name)) return searchYamlKeys(cwd, args);
-            if ("list_plugins".equals(name)) return listPlugins(args);
-            if ("search_plugins".equals(name)) return searchPlugins(args);
-            if ("get_plugin_metadata".equals(name)) return getPluginMetadata(args);
-            if ("find_plugin_files".equals(name)) return findPluginFiles(args);
-            if ("search_yaml_values".equals(name)) return searchYamlValues(cwd, args);
-            if ("read_yaml_snippet".equals(name)) return readYamlSnippet(cwd, args);
-            if ("propose_yaml_set".equals(name)) return proposeYamlSet(cwd, args, sessionId, turnId);
-            return error("未知工具: " + name);
-        } catch (SecurityException se) {
-            return error("路径被拒绝: " + se.getMessage());
+            JsonObject result = definition.execute(context == null ? ToolContext.anonymous() : context,
+                    arguments == null ? new JsonObject() : arguments);
+            return result == null ? error("工具返回 null", "EXECUTION_ERROR") : result;
         } catch (Exception e) {
-            return error(e.getMessage());
+            return executionError(e);
         }
+    }
+
+    private static JsonObject executionError(Exception e) {
+        if (e instanceof SecurityException) {
+            return error("路径被拒绝: 路径越界或无访问权限", "PATH_DENIED");
+        }
+        if (e instanceof FileNotFoundException || e instanceof java.nio.file.NoSuchFileException) {
+            return error("YAML 文件不存在或资源已删除", "NOT_FOUND");
+        }
+        if (e instanceof IllegalArgumentException) {
+            // Do not echo exception messages: parsers can include secret argument values.
+            return error("参数无效或缺少必填参数", "INVALID_ARGUMENT");
+        }
+        java.util.logging.Logger.getLogger(PluginConfigTool.class.getName())
+                .log(java.util.logging.Level.WARNING, "工具执行失败", e);
+        return error("工具执行失败，请检查服务器日志或配置", "EXECUTION_ERROR");
     }
 
     public static String buildSystemPrompt(String cwd) {
@@ -181,17 +239,21 @@ public final class PluginConfigTool {
     }
 
     public static synchronized String confirmPending(String id) {
+        return confirmationMessage(confirmPendingResult(id));
+    }
+
+    public static synchronized JsonObject confirmPendingResult(String id) {
         cleanupExpired();
         PendingChange p = PENDING.get(id);
         if (p == null) {
-            return "待确认修改不存在或已过期: " + id;
+            return confirmationResult(error("待确认修改不存在或已过期: " + id, "NOT_FOUND"), id);
         }
         try {
             File f = requireYaml("", p.fileRel, true);
             YamlConfiguration conf = YamlConfiguration.loadConfiguration(f);
             String nowComparable = comparable(conf.contains(p.path), conf.get(p.path));
             if (!nowComparable.equals(p.oldComparable)) {
-                return "配置在创建确认项后已被修改，已取消执行。请重新运行 ai 生成新的修改计划。";
+                return confirmationResult(error("配置在创建确认项后已被修改，已取消执行。请重新运行 ai 生成新的修改计划。", "EXECUTION_ERROR"), id);
             }
             backup(f);
             conf.set(p.path, p.delete ? null : p.value);
@@ -205,18 +267,47 @@ public final class PluginConfigTool {
                     : "已设置 " + p.fileRel + " -> " + p.path + " = " + p.newPreview;
             if (isExaiConfig(f)) {
                 Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), Config::loadAll);
-                return msg + "\n已保存并备份 .bak；这是 ExAI 自身配置，已触发即时重载";
+                msg += "\n已保存并备份 .bak；这是 ExAI 自身配置，已触发即时重载";
+            } else {
+                msg += "\n已保存并备份 .bak；如需生效请让该插件 reload 或重启服务器";
             }
-            return msg + "\n已保存并备份 .bak；如需生效请让该插件 reload 或重启服务器";
+            JsonObject result = confirmationResult(ok(), id);
+            result.addProperty("applied", true);
+            result.addProperty("file", p.fileRel);
+            result.addProperty("path", p.path);
+            result.addProperty("deleted", p.delete);
+            result.addProperty("message", msg);
+            return result;
         } catch (Exception e) {
-            return "确认执行失败: " + e.getMessage();
+            JsonObject result = executionError(e);
+            result.addProperty("error", "确认执行失败: " + result.get("error").getAsString());
+            return confirmationResult(result, id);
         }
     }
 
     public static synchronized String cancelPending(String id) {
+        return confirmationMessage(cancelPendingResult(id));
+    }
+
+    public static synchronized JsonObject cancelPendingResult(String id) {
         cleanupExpired();
         PendingChange p = PENDING.remove(id);
-        return p == null ? "待确认修改不存在或已过期: " + id : "已取消待确认修改: " + id;
+        if (p == null) {
+            return confirmationResult(error("待确认修改不存在或已过期: " + id, "NOT_FOUND"), id);
+        }
+        JsonObject result = confirmationResult(ok(), id);
+        result.addProperty("cancelled", true);
+        result.addProperty("message", "已取消待确认修改: " + id);
+        return result;
+    }
+
+    private static JsonObject confirmationResult(JsonObject result, String id) {
+        result.addProperty("confirmation_id", id);
+        return result;
+    }
+
+    private static String confirmationMessage(JsonObject result) {
+        return result.get(result.get("ok").getAsBoolean() ? "message" : "error").getAsString();
     }
 
     /** Reverts all confirmed changes in this session from the target turn onward. */
@@ -284,8 +375,9 @@ public final class PluginConfigTool {
         StringBuilder sb = new StringBuilder();
         int ok = 0;
         for (String id : ids) {
-            String r = confirmPending(id);
-            if (r.contains("已保存并备份")) {
+            JsonObject result = confirmPendingResult(id);
+            String r = confirmationMessage(result);
+            if (result.get("ok").getAsBoolean()) {
                 ok++;
             }
             sb.append("- ").append(id).append(": ").append(r).append('\n');
@@ -298,7 +390,7 @@ public final class PluginConfigTool {
     private static JsonObject listPluginYaml(String cwd, JsonObject args) throws IOException {
         File dir = resolve(cwd, optString(args, "path"));
         if (!dir.isDirectory()) {
-            return error("不是目录: " + toRel(dir));
+            return error("不是目录: " + toRel(dir), dir.exists() ? "INVALID_ARGUMENT" : "NOT_FOUND");
         }
         File[] files = dir.listFiles();
         JsonObject out = ok();
@@ -332,7 +424,8 @@ public final class PluginConfigTool {
         String path = optString(args, "path");
         ConfigurationSection sec = (path == null || path.trim().isEmpty()) ? conf : conf.getConfigurationSection(path);
         if (sec == null) {
-            return error(conf.contains(path) ? "该路径是标量，请用 get_yaml_value" : "路径不存在: " + path);
+            return error(conf.contains(path) ? "该路径是标量，请用 get_yaml_value" : "路径不存在: " + path,
+                    conf.contains(path) ? "INVALID_ARGUMENT" : "NOT_FOUND");
         }
         JsonObject out = ok();
         out.addProperty("file", toRel(f));
@@ -674,9 +767,15 @@ public final class PluginConfigTool {
     }
 
     private static JsonObject error(String msg) {
+        return error(msg, "INVALID_ARGUMENT");
+    }
+
+    private static JsonObject error(String msg, String code) {
         JsonObject o = new JsonObject();
         o.addProperty("ok", false);
         o.addProperty("error", msg == null ? "unknown" : msg);
+        o.addProperty("error_code", code);
+        o.addProperty("retryable", false);
         return o;
     }
 
@@ -696,9 +795,9 @@ public final class PluginConfigTool {
 
     private static File requireYaml(String cwd, String path, boolean mustExist) throws IOException {
         File f = resolve(cwd, path);
-        if (mustExist && !f.isFile()) throw new IOException("YAML 文件不存在: " + path);
-        if (!isYamlName(f.getName())) throw new IOException("仅支持 .yml/.yaml 文件: " + path);
-        if (f.exists() && f.length() > MAX_READ_BYTES) throw new IOException("文件过大(>2MB): " + path);
+        if (mustExist && !f.isFile()) throw new FileNotFoundException("YAML 文件不存在: " + path);
+        if (!isYamlName(f.getName())) throw new IllegalArgumentException("仅支持 .yml/.yaml 文件");
+        if (f.exists() && f.length() > MAX_READ_BYTES) throw new IllegalArgumentException("文件过大(>2MB)");
         return f;
     }
 
@@ -955,7 +1054,9 @@ public final class PluginConfigTool {
 
     private static String optString(JsonObject obj, String key) {
         if (obj == null || !obj.has(key) || obj.get(key).isJsonNull()) return null;
-        return obj.get(key).getAsString();
+        JsonElement value = obj.get(key);
+        if (!value.isJsonPrimitive()) throw new IllegalArgumentException("参数必须是标量: " + key);
+        return value.getAsString();
     }
 
     private static Object jsonToYamlValue(JsonElement e) {

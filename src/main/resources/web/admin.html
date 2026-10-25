@@ -67,7 +67,11 @@
     .cli-session-topic { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
     .cli-session-time { display:block; margin-top:4px; color:#8e9bad; font-size:11px; }
     .cli-shell { min-height:0; display:flex; flex-direction:column; }
-    .cli-out { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:24px; white-space:pre-wrap; word-break:break-word; font-size:14px; line-height:1.65; }
+    .cli-out-wrap { position:relative; flex:1; min-height:0; }
+    .cli-out { height:100%; min-height:0; box-sizing:border-box; overflow-y:auto; overscroll-behavior:contain; padding:24px; white-space:pre-wrap; word-break:break-word; font-size:14px; line-height:1.65; }
+    .cli-scroll-bottom { position:absolute; z-index:2; left:50%; bottom:14px; transform:translateX(-50%); border:1px solid #46546a; border-radius:999px; padding:7px 14px; color:#e7eef9; background:rgba(32,40,55,.96); box-shadow:0 7px 20px rgba(0,0,0,.3); cursor:pointer; font-size:12px; }
+    .cli-scroll-bottom:hover { background:#2c384c; border-color:#5b82c5; }
+    .cli-scroll-bottom[hidden] { display:none; }
   .cli-input-wrap { margin:0 18px 18px; border:1px solid #354154; border-radius:18px; padding:10px 14px; display:flex; gap:10px; align-items:flex-end; background:#202837; box-shadow:0 5px 16px rgba(0,0,0,.16); }
   .cli-prompt { color:#78a9ff; font-family:ui-monospace,Consolas,monospace; font-size:12px; white-space:nowrap; padding-bottom:5px; }
     #cliInput { flex:1; border:0; outline:0; resize:none; overflow-y:auto; max-height:150px; min-height:24px; line-height:1.5; color:#edf3fb; background:transparent; font-size:14px; font-family:inherit; padding:2px 0; }
@@ -86,6 +90,9 @@
   .cli-md code { background:#283346; border-radius:4px; padding:1px 4px; }
   .cli-md pre code { background:transparent; padding:0; }
   .cli-md blockquote { margin:6px 0; padding-left:10px; border-left:3px solid #5b82c5; color:#aab8ca; }
+    .cli-live-status { display:flex; align-items:center; width:max-content; max-width:100%; box-sizing:border-box; margin:8px 0; padding:6px 10px; border:1px solid #354154; border-radius:8px; color:#aab8ca; background:#1d2532; font-size:12px; white-space:normal; }
+    .cli-live-status.running { color:#9fc2ff; border-color:#3f5f8d; }
+    .cli-live-status.done { color:#8fc9a3; border-color:#3d654d; }
     .cli-confirm-all { margin:6px 0 10px; padding:5px 10px; font-size:12px; }
     @media (max-width:760px) { .cli-layout { grid-template-columns:1fr; height:auto; } .cli-sidebar { max-height:180px; } .cli-shell { height:calc(100vh - 320px); min-height:420px; } }
 </style>
@@ -180,7 +187,10 @@
           <div id="cliSessions" class="cli-sessions"></div>
         </aside>
         <div class="cli-shell">
-            <div id="cliOut" class="cli-out"></div>
+            <div class="cli-out-wrap">
+              <div id="cliOut" class="cli-out" onscroll="cliHandleOutputScroll()"></div>
+              <button id="cliScrollBottom" class="cli-scroll-bottom" type="button" onclick="cliScrollToBottom()" hidden>↓ 回到底部</button>
+            </div>
             <div id="cliCommandHints" class="cli-command-hints" hidden></div>
             <div class="cli-input-wrap">
               <span id="cliPrompt" class="cli-prompt">plugins/&gt;</span>
@@ -354,6 +364,9 @@ function makeId() { return 's' + Math.random().toString(36).slice(2) + Date.now(
 let cliAiSessionId = localStorage.getItem('exai.cli.aiSessionId') || makeId();
 let cliPendingConfirmIds = [];
 let cliCurrentMd = null;
+let cliLiveStatus = null;
+let cliAutoFollowOutput = true;
+const CLI_BOTTOM_THRESHOLD = 48;
 
   async function cliInit() {
     if (!cliLoaded) {
@@ -405,6 +418,8 @@ let cliCurrentMd = null;
       cliApplyMeta(data);
       out.innerHTML = '';
       cliCurrentMd = null;
+      cliLiveStatus = null;
+      cliAutoFollowOutput = true;
       const messages = data.messages || [];
       if (!messages.length) {
         cliAppend(t(UI.cliHint) + '\n\n', 'var(--muted)');
@@ -419,6 +434,7 @@ let cliCurrentMd = null;
           cliCurrentMd = null;
         }
       });
+      cliScrollToBottom();
     } catch (e) {
       out.textContent = LANG === 'en_US' ? 'Failed to load conversation' : '加载会话失败';
     }
@@ -452,13 +468,65 @@ function cliSetPrompt() {
   document.getElementById('cliPrompt').textContent = 'plugins/' + cliCwd + '>';
 }
 
+function cliHandleOutputScroll() {
+  const out = document.getElementById('cliOut');
+  if (!out) return;
+  cliAutoFollowOutput = out.scrollHeight - out.scrollTop - out.clientHeight <= CLI_BOTTOM_THRESHOLD;
+  cliUpdateScrollBottom();
+}
+
+function cliUpdateScrollBottom() {
+  const out = document.getElementById('cliOut');
+  const button = document.getElementById('cliScrollBottom');
+  if (!out || !button) return;
+  button.textContent = LANG === 'en_US' ? '↓ Jump to latest' : '↓ 回到底部';
+  button.hidden = cliAutoFollowOutput || out.scrollHeight <= out.clientHeight + 1;
+}
+
+function cliFollowOutputIfNeeded() {
+  const out = document.getElementById('cliOut');
+  if (!out) return;
+  if (cliAutoFollowOutput) out.scrollTop = out.scrollHeight;
+  cliUpdateScrollBottom();
+}
+
+function cliScrollToBottom() {
+  const out = document.getElementById('cliOut');
+  if (!out) return;
+  cliAutoFollowOutput = true;
+  out.scrollTop = out.scrollHeight;
+  cliUpdateScrollBottom();
+}
+
+function cliUpdateLiveStatus(message) {
+  if (!message) return;
+  const out = document.getElementById('cliOut');
+  if (!out) return;
+  if (!cliLiveStatus || !cliLiveStatus.isConnected) {
+    cliLiveStatus = document.createElement('div');
+    cliLiveStatus.className = 'cli-live-status';
+    cliLiveStatus.setAttribute('role', 'status');
+    cliLiveStatus.setAttribute('aria-live', 'polite');
+  }
+  cliLiveStatus.textContent = message;
+  cliLiveStatus.classList.toggle('running', /正在|calling/i.test(message));
+  cliLiveStatus.classList.toggle('done', /完成|completed|finished/i.test(message));
+  out.appendChild(cliLiveStatus);
+  cliCurrentMd = null;
+  cliFollowOutputIfNeeded();
+}
+
+function cliFinishLiveStatus() {
+  cliLiveStatus = null;
+}
+
 function cliAppend(text, color) {
   const out = document.getElementById('cliOut');
   const span = document.createElement('span');
   if (color) span.style.color = color;
   span.textContent = text;
   out.appendChild(span);
-  out.scrollTop = out.scrollHeight;
+  cliFollowOutputIfNeeded();
 }
 
 function cliBeginMarkdown() {
@@ -475,8 +543,7 @@ function cliAppendMarkdown(text) {
   if (!cliCurrentMd) cliBeginMarkdown();
   cliCurrentMd.dataset.raw += text;
   cliCurrentMd.innerHTML = renderMarkdown(cliCurrentMd.dataset.raw);
-  const out = document.getElementById('cliOut');
-  out.scrollTop = out.scrollHeight;
+  cliFollowOutputIfNeeded();
 }
 
 function escapeHtml(s) {
@@ -581,6 +648,7 @@ function cliAtLastLine(el) {
 async function cliRun(cmd) {
   const inp = document.getElementById('cliInput');
   inp.disabled = true;
+  cliFinishLiveStatus();
   cliAppend('plugins/' + cliCwd + '> ' + cmd + '\n', 'var(--accent)');
   try {
     if (!window.ReadableStream || !window.TextDecoder) throw new Error('stream unsupported');
@@ -656,7 +724,7 @@ function cliHandleSse(frame) {
   if (event === 'meta') {
     cliApplyMeta(d);
   } else if (event === 'status') {
-    if (d.message) cliAppend('[' + d.message + ']\n', 'var(--muted)');
+    if (d.message) cliUpdateLiveStatus(d.message);
   } else if (event === 'delta') {
     if (d.text) cliAppendMarkdown(d.text);
   } else if (event === 'done') {
@@ -664,9 +732,11 @@ function cliHandleSse(frame) {
     if (Array.isArray(d.confirmationIds) && d.confirmationIds.length) cliShowConfirmAll(d.confirmationIds);
     cliAppend('\n', null);
     cliCurrentMd = null;
+    cliFinishLiveStatus();
   } else if (event === 'error') {
     cliApplyMeta(d);
     cliAppend((d.output || d.error || '流式请求失败') + '\n', '#f85149');
+    cliFinishLiveStatus();
   }
 }
 
@@ -684,7 +754,7 @@ function cliShowConfirmAll(ids) {
   btn.onclick = cliConfirmAll;
   out.appendChild(btn);
   out.appendChild(document.createTextNode('\n'));
-  out.scrollTop = out.scrollHeight;
+  cliFollowOutputIfNeeded();
 }
 
 async function cliConfirmAll() {

@@ -115,3 +115,7 @@ png/
 .claude/
 
 /FORUM.md
+
+# Local API test credentials and session cookies
+/docs/cookies.txt
+/docs/test.sh

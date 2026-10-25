@@ -2,12 +2,12 @@ package com.exai.gui;
 
 import org.bukkit.entity.Player;
 
-import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class GUIManager {
-    private static Set<UUID> dialoguePlayers = new HashSet<>();
+    private static final Set<UUID> dialoguePlayers = ConcurrentHashMap.newKeySet();
 
     public static boolean isInDialogueMode(Player player) {
         return dialoguePlayers.contains(player.getUniqueId());

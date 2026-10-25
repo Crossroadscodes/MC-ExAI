@@ -11,6 +11,7 @@ public class Answer {
     private List<String> sources;
     private double confidence;
     private String suggestedAction;
+    private RagStatus status = RagStatus.UNKNOWN;
     /** AI 判定无法作答（命中拒答标记）时为 true，公屏广播据此跳过不回复。 */
     private boolean unknown;
 }

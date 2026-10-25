@@ -1,6 +1,7 @@
 package com.exai.manager;
 
 import com.exai.ExAI;
+import com.exai.config.Config;
 import com.exai.entity.GameDocument;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.i18n.Lang;
@@ -29,7 +30,10 @@ public class GameDataLoader {
             saveDefaultKnowledgeYml(plugin);
         }
 
-        plugin.getLogger().info(Lang.get("log.read-knowledge-yml"));
+        String readLogKey = "mysql".equalsIgnoreCase(Config.storageType)
+                ? "log.read-knowledge-mysql"
+                : "log.read-knowledge-yml";
+        plugin.getLogger().info(Lang.get(readLogKey));
         List<GameDocument> documents = loadFromKnowledgeFile();
         plugin.getLogger().info(Lang.get("log.loaded-docs", documents.size()));
         return documents;
@@ -73,6 +77,7 @@ public class GameDataLoader {
 
     private List<GameDocument> loadFromKnowledgeFile() {
         List<KnowledgeEntry> entries = KnowledgeFileManager.readAll();
+        entries = KnowledgeIdService.ensureMissingIds(entries);
         return createChunksFromEntries(entries);
     }
 
@@ -95,7 +100,7 @@ public class GameDataLoader {
             metadata.put("total_entries", entries.size());
 
             GameDocument chunk = new GameDocument(
-                    "chunk_" + String.format("%04d", i + 1),
+                    KnowledgeIdService.documentId(entry),
                     chunkText,
                     Lang.get("log.knowledge-category"),
                     metadata
