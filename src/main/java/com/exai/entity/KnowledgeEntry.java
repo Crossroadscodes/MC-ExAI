@@ -16,6 +16,10 @@ public class KnowledgeEntry {
     private String source = "player";
     /** 提问者是否对该回答表达过感谢（仅自动采集有意义，供管理员复核参考） */
     private boolean thanked = false;
+    /** AI 对自动采集前序聊天的摘要，供管理员复核；旧记录为空。 */
+    private String contextSummary = "";
+    /** 自动搜集时供审核复核的原始公屏上下文。 */
+    private String rawContext = "";
 
     public KnowledgeEntry(String question, String answer, String submitter, long timestamp) {
         this.question = question;

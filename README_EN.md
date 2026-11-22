@@ -36,6 +36,11 @@ What's new in v1.0.7:
 ### 4. Web CLI
 
 - Provides function-calling tools for editing server plugin configurations, with session management and conversation rewind support.
+- Tasks pause after 20 model requests per run. Use **Continue task**, `/continue`, or `继续` to resume saved progress. A new ordinary request ends the paused task and cancels its pending previews.
+- New transcripts are stored without the previous 4,000-character truncation. Tool calls and results are stored separately; older context is summarized with the configured model when needed. Summary requests do not consume the task's 20-request allowance.
+- Configure `webui.ai.maxIterations` (20), `contextMaxChars` (24000), `recentMessageGroups` (8), and `summaryMaxChars` (4000). The character budget is not a token budget and excludes the system prompt.
+- Sessions are stored in `plugins/ExAI/web-ai-sessions/<sessionId>.json` with temporary-file replacement and `.bak` recovery. The old `web-ai-sessions.json` is migrated and retained; `web-ai-sessions-migration.json` records completion. Sessions expire 30 days after their last conversation, with cleanup on access.
+- Restarted or interrupted tasks require explicit continuation; completed tool calls are not replayed. Pending previews still expire after 10 minutes and are invalidated by restart. Regenerated previews require confirmation, and historical configuration values must be checked before changes.
 - Still in testing and may carry risks. Feedback is welcome.
 
 ---

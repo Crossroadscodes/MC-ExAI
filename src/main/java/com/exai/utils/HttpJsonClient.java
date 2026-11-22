@@ -23,6 +23,8 @@ public final class HttpJsonClient {
         void onDone() throws IOException;
     }
 
+    public interface ResponseObserver { void onResponse(JsonObject data); }
+
     public static JsonObject postJson(String url, String bearerToken, JsonObject body) throws IOException {
         HttpURLConnection conn = openPost(url, bearerToken, "application/json");
         writePayload(conn, body);
@@ -39,6 +41,11 @@ public final class HttpJsonClient {
     }
 
     public static void postJsonStream(String url, String bearerToken, JsonObject body, StreamHandler handler) throws IOException {
+        postJsonStream(url, bearerToken, body, handler, null);
+    }
+
+    public static void postJsonStream(String url, String bearerToken, JsonObject body, StreamHandler handler,
+                                      ResponseObserver observer) throws IOException {
         HttpURLConnection conn = openPost(url, bearerToken, "text/event-stream");
         writePayload(conn, body);
 
@@ -67,14 +74,14 @@ public final class HttpJsonClient {
                     }
                     return;
                 }
+                JsonObject event = JsonParser.parseString(data).getAsJsonObject();
+                if (observer != null) observer.onResponse(event);
                 if (handler != null) {
-                    handler.onData(JsonParser.parseString(data).getAsJsonObject());
+                    handler.onData(event);
                 }
             }
         }
-        if (handler != null) {
-            handler.onDone();
-        }
+        throw new IOException("模型流式响应在结束标记前断开");
     }
 
     private static HttpURLConnection openPost(String url, String bearerToken, String accept) throws IOException {

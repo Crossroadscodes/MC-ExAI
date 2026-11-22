@@ -50,6 +50,12 @@
   .kb-entry { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:10px; }
   .kb-entry .kb-q { margin-bottom:8px; }
   .kb-entry .kb-acts { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .rag-grid { display:grid; grid-template-columns:minmax(280px, .9fr) minmax(360px, 1.1fr); gap:14px; }
+  .rag-row { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:9px; }
+  .rag-row-head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+  .rag-row textarea { margin-top:7px; }
+  .rag-meta { color:var(--muted); font-size:12px; }
+  .rag-detail { white-space:pre-wrap; word-break:break-word; background:#0f1115; border:1px solid var(--line); padding:10px; border-radius:6px; }
   .pd-entry { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:10px; }
   .pd-head { display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
   .pd-name { font-size:14px; font-weight:600; }
@@ -67,6 +73,7 @@
     .cli-session-topic { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
     .cli-session-time { display:block; margin-top:4px; color:#8e9bad; font-size:11px; }
     .cli-shell { min-height:0; display:flex; flex-direction:column; }
+    .cli-continue { align-self:flex-start; flex-shrink:0; margin:8px 18px; }
     .cli-out-wrap { position:relative; flex:1; min-height:0; }
     .cli-out { height:100%; min-height:0; box-sizing:border-box; overflow-y:auto; overscroll-behavior:contain; padding:24px; white-space:pre-wrap; word-break:break-word; font-size:14px; line-height:1.65; }
     .cli-scroll-bottom { position:absolute; z-index:2; left:50%; bottom:14px; transform:translateX(-50%); border:1px solid #46546a; border-radius:999px; padding:7px 14px; color:#e7eef9; background:rgba(32,40,55,.96); box-shadow:0 7px 20px rgba(0,0,0,.3); cursor:pointer; font-size:12px; }
@@ -95,6 +102,7 @@
     .cli-live-status.done { color:#8fc9a3; border-color:#3d654d; }
     .cli-confirm-all { margin:6px 0 10px; padding:5px 10px; font-size:12px; }
     @media (max-width:760px) { .cli-layout { grid-template-columns:1fr; height:auto; } .cli-sidebar { max-height:180px; } .cli-shell { height:calc(100vh - 320px); min-height:420px; } }
+  @media (max-width:760px) { .rag-grid { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
@@ -115,6 +123,7 @@
   <nav>
     <button class="tab active" id="tabConfig" onclick="switchView('config')"></button>
     <button class="tab" id="tabKnowledge" onclick="switchView('knowledge')"></button>
+    <button class="tab" id="tabRag" onclick="switchView('rag')"></button>
     <button class="tab" id="tabFiles" onclick="switchView('files')"></button>
     <button class="tab" id="tabCli" onclick="switchView('cli')"></button>
     <button class="tab" type="button" onclick="logout()">Sign out</button>
@@ -160,6 +169,38 @@
     </div>
   </div>
 
+  <div id="viewRag" style="display:none">
+    <div class="card">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn ghost" onclick="ragLoadCases()" id="ragRefreshCases"></button>
+        <button class="btn ghost" onclick="ragNewCase()" id="ragNewCase"></button>
+        <span class="toast" id="ragToast"></span>
+      </div>
+      <div id="ragCases"></div>
+    </div>
+    <div class="rag-grid">
+      <div class="card">
+        <h2 id="ragLogsTitle"></h2>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <button class="btn ghost" onclick="ragLoadLogs(ragLogPage-1)" id="ragLogPrev">‹</button>
+          <span class="rag-meta" id="ragLogPageInfo"></span>
+          <button class="btn ghost" onclick="ragLoadLogs(ragLogPage+1)" id="ragLogNext">›</button>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input type="checkbox" id="ragSelectAll" onchange="ragToggleAll(this.checked)"><span id="ragSelectAllLabel"></span></label>
+        <div id="ragLogs"></div>
+        <button class="btn" onclick="ragMigrateSelected()" id="ragMigrateBtn"></button>
+      </div>
+      <div class="card">
+        <h2 id="ragEditorTitle"></h2>
+        <div id="ragDrafts"></div>
+        <div id="ragKnowledgePanel" style="margin-top:14px">
+          <div style="display:flex;gap:8px"><input id="ragKnowledgeId" type="text"><button class="btn ghost" onclick="ragLookupKnowledge()" id="ragLookupBtn"></button></div>
+          <div class="rag-meta" id="ragKnowledgeResult" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="viewFiles" style="display:none">
     <div class="card">
       <div class="fb-bar">
@@ -191,6 +232,7 @@
               <div id="cliOut" class="cli-out" onscroll="cliHandleOutputScroll()"></div>
               <button id="cliScrollBottom" class="cli-scroll-bottom" type="button" onclick="cliScrollToBottom()" hidden>↓ 回到底部</button>
             </div>
+            <button id="cliContinue" class="btn cli-continue" type="button" onclick="cliRun('/continue')" hidden>继续任务</button>
             <div id="cliCommandHints" class="cli-command-hints" hidden></div>
             <div class="cli-input-wrap">
               <span id="cliPrompt" class="cli-prompt">plugins/&gt;</span>
@@ -246,6 +288,26 @@ const UI = {
                  en_US:'A .bak backup is created before saving. Note: the target plugin must reload (or the server restart) for changes to take effect.' },
   // 知识库
   tabKnowledge:{ zh_CN:'知识库',                en_US:'Knowledge' },
+  tabRag:{ zh_CN:'RAG 数据集', en_US:'RAG dataset' },
+  ragRefresh:{ zh_CN:'⟳ 刷新数据集', en_US:'⟳ Refresh dataset' },
+  ragNew:{ zh_CN:'+ 新建用例', en_US:'+ New case' },
+  ragLogs:{ zh_CN:'从历史日志迁移（勾选后逐条编辑）', en_US:'Migrate from logs (select, then edit each)' },
+  ragOriginalQuestion:{ zh_CN:'玩家原话：', en_US:'Player input: ' },
+  ragRewrittenQuestion:{ zh_CN:'上下文改写（优先用于数据集）：', en_US:'Context rewrite (preferred for dataset): ' },
+  ragEditor:{ zh_CN:'选中日志的草稿', en_US:'Selected log drafts' },
+  ragSelectAll:{ zh_CN:'选择本页全部日志', en_US:'Select all logs on this page' },
+  ragMigrate:{ zh_CN:'保存所选日志到数据集', en_US:'Save selected logs to dataset' },
+  ragLookup:{ zh_CN:'查看知识块', en_US:'View knowledge block' },
+  ragIdPh:{ zh_CN:'输入知识 ID', en_US:'Enter knowledge ID' },
+  ragQuestion:{ zh_CN:'问题', en_US:'Question' },
+  ragAnswer:{ zh_CN:'参考答案', en_US:'Reference answer' },
+  ragIds:{ zh_CN:'知识 ID（逗号分隔）', en_US:'Knowledge IDs (comma separated)' },
+  ragBehavior:{ zh_CN:'预期行为', en_US:'Expected behavior' },
+  ragEnabled:{ zh_CN:'参与评估', en_US:'Enabled' },
+  ragSave:{ zh_CN:'保存', en_US:'Save' },
+  ragDelete:{ zh_CN:'删除', en_US:'Delete' },
+  ragEmpty:{ zh_CN:'暂无数据集用例', en_US:'No dataset cases' },
+  ragMigrated:{ zh_CN:'已迁移', en_US:'Migrated' },
   kbCatKnow:   { zh_CN:'知识',                  en_US:'Knowledge' },
   kbCatPlugin: { zh_CN:'插件描述',              en_US:'Plugin desc' },
   kbAdd:       { zh_CN:'+ 新增',                en_US:'+ Add' },
@@ -340,18 +402,22 @@ function showToast(id, msg, ok) {
 // ====== 视图切换 ======
 let filesLoaded = false;
 let knowledgeLoaded = false;
+let ragLoaded = false;
 function switchView(v) {
   document.getElementById('viewConfig').style.display = v === 'config' ? '' : 'none';
   document.getElementById('viewKnowledge').style.display = v === 'knowledge' ? '' : 'none';
+  document.getElementById('viewRag').style.display = v === 'rag' ? '' : 'none';
   document.getElementById('viewFiles').style.display = v === 'files' ? '' : 'none';
   document.getElementById('viewCli').style.display = v === 'cli' ? '' : 'none';
   document.getElementById('configBar').style.display = v === 'config' ? '' : 'none';
   document.getElementById('tabConfig').classList.toggle('active', v === 'config');
   document.getElementById('tabKnowledge').classList.toggle('active', v === 'knowledge');
+  document.getElementById('tabRag').classList.toggle('active', v === 'rag');
   document.getElementById('tabFiles').classList.toggle('active', v === 'files');
   document.getElementById('tabCli').classList.toggle('active', v === 'cli');
   if (v === 'files' && !filesLoaded) { filesLoaded = true; loadDir(''); }
   if (v === 'knowledge' && !knowledgeLoaded) { knowledgeLoaded = true; kbLoad(0); }
+  if (v === 'rag' && !ragLoaded) { ragLoaded = true; ragLoadCases(); ragLoadLogs(0); }
   if (v === 'cli') { cliInit(); }
 }
 
@@ -361,6 +427,8 @@ let cliHist = [];
 let cliHistIdx = -1;
 let cliLoaded = false;
 function makeId() { return 's' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
+let cliRequestBusy = false;
+let cliStreamFinished = false;
 let cliAiSessionId = localStorage.getItem('exai.cli.aiSessionId') || makeId();
 let cliPendingConfirmIds = [];
 let cliCurrentMd = null;
@@ -441,6 +509,7 @@ const CLI_BOTTOM_THRESHOLD = 48;
   }
 
   async function cliSwitchSession(id) {
+    if (cliRequestBusy) return;
     if (!id || id === cliAiSessionId) return;
     cliAiSessionId = id;
     localStorage.setItem('exai.cli.aiSessionId', cliAiSessionId);
@@ -450,6 +519,7 @@ const CLI_BOTTOM_THRESHOLD = 48;
   }
 
   async function cliNewSession() {
+    if (cliRequestBusy) return;
     cliAiSessionId = makeId();
     localStorage.setItem('exai.cli.aiSessionId', cliAiSessionId);
     cliPendingConfirmIds = [];
@@ -458,10 +528,14 @@ const CLI_BOTTOM_THRESHOLD = 48;
   }
 
   async function cliRefreshAfterCommand(cmd) {
-    if (/^\s*\/(rewind|rollback|撤回|撤回到)(?:\s|$)/i.test(cmd)) {
+    if (/^\s*\/(rewind|rollback|撤回|撤回到|reset|重置|重置对话|清空对话)(?:\s|$)/i.test(cmd)) {
       await cliLoadTranscript();
     }
     await cliLoadSessions();
+    try {
+      const r = await fetch('/api/cli/session?id=' + encodeURIComponent(cliAiSessionId));
+      if (r.ok) cliApplyMeta(await r.json());
+    } catch (e) { /* Keep the last known task state until the next refresh. */ }
   }
 
 function cliSetPrompt() {
@@ -605,6 +679,7 @@ function cliKey(e) {
     const zh = LANG !== 'en_US';
     return [
       ['/help', zh ? '显示命令帮助' : 'Show command help'],
+      ['/continue', zh ? '继续最近暂停的任务' : 'Continue the paused task'],
       ['/history', zh ? '查看可撤回轮次' : 'Show rewindable turns'],
       ['/reset', zh ? '清空对话记忆' : 'Clear conversation memory'],
       ['/confirm <id>', zh ? '确认配置修改预览' : 'Confirm a config preview'],
@@ -646,23 +721,34 @@ function cliAtLastLine(el) {
 }
 
 async function cliRun(cmd) {
+  if (cliRequestBusy) return;
+  cliRequestBusy = true;
+  cliStreamFinished = false;
   const inp = document.getElementById('cliInput');
+  const resume = document.getElementById('cliContinue');
+  if (resume) resume.disabled = true;
   inp.disabled = true;
   cliFinishLiveStatus();
   cliAppend('plugins/' + cliCwd + '> ' + cmd + '\n', 'var(--accent)');
   try {
-    if (!window.ReadableStream || !window.TextDecoder) throw new Error('stream unsupported');
-    const r = await fetch('/api/cli/stream', {
-      method:'POST', headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ cmd: cmd, cwd: cliCwd, aiSessionId: cliAiSessionId })
-    });
-    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
-    await cliReadStream(r);
-    } catch (err) {
-      await cliRunFallback(cmd, err);
-    } finally {
-      await cliRefreshAfterCommand(cmd);
-      inp.disabled = false;
+    if (!window.ReadableStream || !window.TextDecoder) {
+      await cliRunFallback(cmd);
+    } else {
+      const r = await fetch('/api/cli/stream', {
+        method:'POST', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ cmd: cmd, cwd: cliCwd, aiSessionId: cliAiSessionId })
+      });
+      if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+      await cliReadStream(r);
+      if (!cliStreamFinished) throw new Error('连接在任务结束前断开');
+    }
+  } catch (err) {
+    cliAppend('请求中断: ' + err + '。请等待当前执行结束后刷新，或使用继续按钮恢复已保存进度。\n', '#f85149');
+    cliFinishLiveStatus();
+  } finally {
+    cliRequestBusy = false;
+    await cliRefreshAfterCommand(cmd);
+    inp.disabled = false;
     cliAutoResize(inp);
     inp.focus();
   }
@@ -728,12 +814,14 @@ function cliHandleSse(frame) {
   } else if (event === 'delta') {
     if (d.text) cliAppendMarkdown(d.text);
   } else if (event === 'done') {
+    cliStreamFinished = true;
     cliApplyMeta(d);
     if (Array.isArray(d.confirmationIds) && d.confirmationIds.length) cliShowConfirmAll(d.confirmationIds);
     cliAppend('\n', null);
     cliCurrentMd = null;
     cliFinishLiveStatus();
   } else if (event === 'error') {
+    cliStreamFinished = true;
     cliApplyMeta(d);
     cliAppend((d.output || d.error || '流式请求失败') + '\n', '#f85149');
     cliFinishLiveStatus();
@@ -741,6 +829,15 @@ function cliHandleSse(frame) {
 }
 
 function cliApplyMeta(d) {
+  if (typeof d.canContinue === 'boolean') {
+    const button = document.getElementById('cliContinue');
+    if (button) {
+      button.textContent = LANG === 'en_US' ? 'Continue task' : '继续任务';
+      button.hidden = !d.canContinue;
+      button.disabled = cliRequestBusy;
+      button.title = '本次模型调用 ' + (d.iterations || 0) + ' 轮，累计 ' + (d.totalIterations || 0) + ' 轮';
+    }
+  }
   if (typeof d.cwd === 'string') { cliCwd = d.cwd; cliSetPrompt(); }
   if (d.aiSessionId) { cliAiSessionId = d.aiSessionId; localStorage.setItem('exai.cli.aiSessionId', cliAiSessionId); }
 }
@@ -865,6 +962,10 @@ function applyLang(lang) {
   const set = (id, obj) => { const e = document.getElementById(id); if (e) e.textContent = t(obj); };
   set('pageTitle', UI.pageTitle); set('headerSub', UI.headerSub);
   set('tabConfig', UI.tabConfig); set('tabKnowledge', UI.tabKnowledge); set('tabFiles', UI.tabFiles);
+  set('tabRag', UI.tabRag); set('ragRefreshCases', UI.ragRefresh); set('ragNewCase', UI.ragNew);
+  set('ragLogsTitle', UI.ragLogs); set('ragEditorTitle', UI.ragEditor); set('ragSelectAllLabel', UI.ragSelectAll);
+  set('ragMigrateBtn', UI.ragMigrate); set('ragLookupBtn', UI.ragLookup);
+  const ragId = document.getElementById('ragKnowledgeId'); if (ragId) ragId.placeholder = t(UI.ragIdPh);
   set('tabCli', UI.tabCli);
   { const ci = document.getElementById('cliInput'); if (ci) ci.placeholder = t(UI.cliInputPh); }
   set('saveBtn', UI.saveBtn); set('footerNote', UI.footerNote);
@@ -1108,6 +1209,140 @@ async function kbMigrate() {
     if (d.ok) showToast('kbToast', '✔ knowledge ' + d.knowledgeCount + ' / plugin ' + d.pluginCount, true);
     else showToast('kbToast', t(UI.saveFail) + (d.error || t(UI.unknownErr)), false);
   } catch (e) { showToast('kbToast', t(UI.saveFail) + e, false); }
+}
+
+// ====== RAG evaluation dataset ======
+let ragLogPage = 0, ragLogTotal = 0;
+const ragPageSize = 12;
+let ragLogs = [];
+const ragSelected = new Map();
+
+async function ragLoadCases() {
+  try {
+    const response = await fetch('/api/rag-dataset');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.status);
+    ragRenderCases(data.cases || []);
+  } catch (error) { showToast('ragToast', t(UI.loadFail) + error, false); }
+}
+
+function ragRenderCases(cases) {
+  const root = document.getElementById('ragCases'); root.innerHTML = '';
+  if (!cases.length) { root.textContent = t(UI.ragEmpty); return; }
+  cases.forEach(item => {
+    const row = document.createElement('div'); row.className = 'rag-row';
+    row.innerHTML = '<div class="rag-row-head"><strong></strong><span class="rag-meta"></span></div>';
+    row.querySelector('strong').textContent = item.id + ' · ' + item.behavior;
+    row.querySelector('.rag-meta').textContent = item.enabled ? t(UI.ragEnabled) : 'Disabled';
+    const fields = ragFields(item, null);
+    row.appendChild(fields);
+    const actions = el('div', { class:'rag-row-head' });
+    const save = el('button', { class:'btn ghost', type:'button', text:t(UI.ragSave) });
+    save.onclick = () => ragSaveCase(ragCollect(fields, item));
+    const toggle = el('button', { class:'btn ghost', type:'button', text:item.enabled ? 'Disable' : 'Enable' });
+    toggle.onclick = () => ragSaveCase(ragCollect(fields, item, !item.enabled));
+    const del = el('button', { class:'btn ghost', type:'button', text:t(UI.ragDelete) });
+    del.onclick = () => ragDelete(item.id);
+    actions.append(save, toggle, del); row.appendChild(actions); root.appendChild(row);
+  });
+}
+
+function ragFields(item, fingerprint) {
+  const box = el('div', { class:'rag-fields' });
+  const question = el('textarea'); question.placeholder = t(UI.ragQuestion); question.value = item.question || '';
+  const behavior = el('select'); ['ANSWER','REFUSE'].forEach(v => behavior.appendChild(el('option',{value:v,text:v}))); behavior.value = item.behavior || 'ANSWER';
+  const answer = el('textarea'); answer.placeholder = t(UI.ragAnswer); answer.value = item.answer || '';
+  const ids = el('input',{type:'text'}); ids.placeholder = t(UI.ragIds); ids.value = (item.knowledgeIds || []).join(', ');
+  behavior.onchange = () => { const refuse = behavior.value === 'REFUSE'; answer.disabled = refuse; ids.disabled = refuse; if (refuse) { answer.value = ''; ids.value = ''; } };
+  behavior.onchange();
+  box.append(el('label',{text:t(UI.ragQuestion)}), question, el('label',{text:t(UI.ragBehavior)}), behavior,
+    el('label',{text:t(UI.ragAnswer)}), answer, el('label',{text:t(UI.ragIds)}), ids);
+  box._fields = { question, behavior, answer, ids, fingerprint };
+  return box;
+}
+
+function ragCollect(box, base, enabled) {
+  const f = box._fields;
+  return { id:base.id || '', enabled:enabled == null ? base.enabled !== false : enabled,
+    sourceLogFingerprint:f.fingerprint || base.sourceLogFingerprint || '', question:f.question.value,
+    behavior:f.behavior.value, answer:f.answer.value,
+    knowledgeIds:f.ids.value.split(/[,，\s]+/).map(x=>x.trim()).filter(Boolean) };
+}
+
+function ragNewCase() {
+  const row = { enabled:true, question:'', behavior:'ANSWER', answer:'', knowledgeIds:[], sourceLogFingerprint:'manual_'+crypto.randomUUID().replace(/-/g,'') };
+  const box = ragFields(row, row.sourceLogFingerprint);
+  const card = el('div',{class:'rag-row'}); card.appendChild(box);
+  const save = el('button',{class:'btn',type:'button',text:t(UI.ragSave)});
+  save.onclick = async () => { await ragSaveCase(ragCollect(box,row)); };
+  card.appendChild(save); document.getElementById('ragCases').prepend(card);
+}
+
+async function ragSaveCase(item) {
+  try {
+    const response = await fetch('/api/rag-dataset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(item)});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.status);
+    showToast('ragToast',t(UI.savedOk),true); await ragLoadCases();
+  } catch(error) { showToast('ragToast',t(UI.saveFail)+error,false); }
+}
+
+async function ragDelete(id) {
+  try { const r=await fetch('/api/rag-dataset?id='+encodeURIComponent(id),{method:'DELETE'}); const d=await r.json(); if(!r.ok) throw new Error(d.error); ragLoadCases(); }
+  catch(e) { showToast('ragToast',t(UI.saveFail)+e,false); }
+}
+
+async function ragLoadLogs(page) {
+  ragLogPage=Math.max(0,page);
+  try {
+    const r=await fetch('/api/rag-dataset/logs?page='+ragLogPage+'&size='+ragPageSize); const d=await r.json();
+    if(!r.ok) throw new Error(d.error); ragLogs=d.logs||[]; ragLogTotal=d.total||0;
+    const root=document.getElementById('ragLogs'); root.innerHTML='';
+    ragLogs.forEach(log=>{
+      const row=el('label',{class:'rag-row'}); const check=el('input',{type:'checkbox'}); check.checked=ragSelected.has(log.fingerprint);
+      check.onchange=()=>{if(check.checked) ragSelected.set(log.fingerprint,log); else ragSelected.delete(log.fingerprint); ragRenderDrafts();};
+      const head=el('div',{class:'rag-row-head'},[check,el('strong',{text:log.playerName+' · '+log.status}),el('span',{class:'rag-meta',text:log.createTime||''})]);
+      row.appendChild(head);
+      if(log.retrievalQuestion) row.appendChild(el('div',{text:t(UI.ragRewrittenQuestion)+log.retrievalQuestion,style:'white-space:pre-wrap;font-weight:600;color:var(--accent);margin:6px 0'}));
+      row.appendChild(el('div',{text:t(UI.ragOriginalQuestion)+(log.playerInput||''),style:'white-space:pre-wrap'}));
+      row.appendChild(el('div',{class:'rag-meta',text:log.migrated?t(UI.ragMigrated):log.source||''})); root.appendChild(row);
+    });
+    const pages=Math.max(1,Math.ceil(ragLogTotal/ragPageSize)); document.getElementById('ragLogPageInfo').textContent=(ragLogPage+1)+' / '+pages+' ('+ragLogTotal+')';
+    document.getElementById('ragLogPrev').disabled=ragLogPage<=0; document.getElementById('ragLogNext').disabled=ragLogPage>=pages-1;
+    document.getElementById('ragSelectAll').checked=ragLogs.length>0&&ragLogs.every(x=>ragSelected.has(x.fingerprint));
+    ragRenderDrafts();
+  } catch(e) { showToast('ragToast',t(UI.loadFail)+e,false); }
+}
+
+function ragToggleAll(checked) { ragLogs.forEach(log=>checked?ragSelected.set(log.fingerprint,log):ragSelected.delete(log.fingerprint)); ragLoadLogs(ragLogPage); }
+
+function ragRenderDrafts() {
+  const root=document.getElementById('ragDrafts'); root.innerHTML='';
+  ragSelected.forEach(log=>{
+    const card=el('div',{class:'rag-row'}); card.append(el('div',{class:'rag-meta',text:log.playerName+' · '+log.status}));
+    const box=ragFields(log,log.fingerprint); card.appendChild(box);
+    box._fields.fingerprint=log.fingerprint; card._ragBox=box; root.appendChild(card);
+  });
+}
+
+async function ragMigrateSelected() {
+  const items=[]; document.querySelectorAll('#ragDrafts .rag-row').forEach(card=>{
+    const fingerprint=card._ragBox._fields.fingerprint; const base=ragSelected.get(fingerprint); items.push(ragCollect(card._ragBox,base));
+  });
+  if(!items.length) { showToast('ragToast',t(UI.ragSelectAll),false); return; }
+  try {
+    const r=await fetch('/api/rag-dataset/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})}); const d=await r.json();
+    if(!r.ok) throw new Error(d.error); const failures=(d.results||[]).filter(x=>!x.ok).length;
+    (d.results||[]).filter(x=>x.ok).forEach(x=>ragSelected.delete(x.sourceLogFingerprint));
+    showToast('ragToast','Saved '+d.savedCount+'; failed '+failures,failures===0);
+    await ragLoadCases(); await ragLoadLogs(ragLogPage);
+  } catch(e) { showToast('ragToast',t(UI.saveFail)+e,false); }
+}
+
+async function ragLookupKnowledge() {
+  const id=document.getElementById('ragKnowledgeId').value.trim(); const box=document.getElementById('ragKnowledgeResult'); box.textContent=t(UI.loading);
+  try { const r=await fetch('/api/rag-dataset/knowledge?id='+encodeURIComponent(id)); const d=await r.json(); if(!r.ok) throw new Error(d.error); box.textContent=d.id+' · '+d.question+'\n\n'+d.content; }
+  catch(e) { box.textContent=String(e); }
 }
 
 // ====== 插件描述分类 ======

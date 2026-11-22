@@ -14,9 +14,15 @@ import lombok.Getter;
 public class ReviewResult {
     private final boolean pass;
     private final String reason;
+    private final String contextSummary;
 
     public ReviewResult(boolean pass, String reason) {
+        this(pass, reason, "");
+    }
+
+    public ReviewResult(boolean pass, String reason, String contextSummary) {
         this.pass = pass;
         this.reason = reason;
+        this.contextSummary = contextSummary == null ? "" : contextSummary;
     }
 }

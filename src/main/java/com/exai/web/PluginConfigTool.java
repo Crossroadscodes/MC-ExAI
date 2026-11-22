@@ -135,6 +135,13 @@ public final class PluginConfigTool {
                         prop("context_lines", "integer", "Number of lines before/after each match, 0-10.")),
                 new String[]{"file"}),
                 (context, args) -> readYamlSnippet(context.getCwd(), args));
+        register(tools, tool("read_yaml_lines",
+                "Read a bounded range of raw YAML lines, including comments. Use next_line to continue.",
+                objProps(prop("file", "string", "YAML file path relative to plugins/."),
+                        prop("start_line", "integer", "First line, starting at 1."),
+                        prop("line_count", "integer", "Number of lines, 1-100; defaults to 50.")),
+                new String[]{"file", "start_line"}),
+                (context, args) -> readYamlLines(context.getCwd(), args));
         JsonObject proposeProps = objProps(
                 prop("file", "string", "YAML file path relative to plugins/."),
                 prop("path", "string", "YAML key path to change."),
@@ -223,6 +230,7 @@ public final class PluginConfigTool {
                 + "遇到模糊插件名时，必须先调用 list_plugins 列出服务器所有插件，由你根据名称/描述/data_dir 判断最相似候选；不要直接把翻译词当目录名调用 list_plugin_yaml。\n"
                 + "若 list_plugins 后仍不确定，再调用 search_plugins、get_plugin_metadata 和 find_plugin_files 辅助定位。\n"
                 + "遇到模糊设置名时，先 search_yaml_keys，再 search_yaml_values，必要时 read_yaml_snippet 看注释。\n"
+                + "片段上下文不足、配置块未结束或结果被截断时，使用 read_yaml_lines 按行继续向前或向后读取，直到相关配置块完整；根据 next_line 继续分页。无法读全时明确说明，不能猜测。\n"
                 + "中文需求可以联想到英文同义词辅助判断：佣兵=mercenary/hireling/companion/npc/soldier；远征=expedition/quest/adventure，但英文词只能用于搜索/判断，不能当作已存在目录。\n"
                 + "当前目录只在用户明确说当前目录/这里/这个文件时作为主要范围；插件发现默认从 plugins 根搜索。\n"
                 + "如果多个插件、文件或配置路径都可能匹配，必须询问用户选择，不能猜。\n"
@@ -238,6 +246,64 @@ public final class PluginConfigTool {
                 + "不要泄露已遮罩的 secret 值。";
     }
 
+    public static synchronized void cancelSessionPending(String sessionId) {
+        PENDING.values().removeIf(change -> change.sessionId.equals(sessionId));
+    }
+
+    public static synchronized String confirmationState(String sessionId, com.exai.service.ToolConversation state) {
+        cleanupExpired();
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        for (JsonElement element : state.messages) {
+            JsonObject message = element.getAsJsonObject();
+            if (!"tool".equals(string(message, "role"))) continue;
+            try {
+                JsonObject result = com.google.gson.JsonParser.parseString(string(message, "content")).getAsJsonObject();
+                if (result.has("confirmation_id")) ids.add(string(result, "confirmation_id"));
+            } catch (RuntimeException ignored) { }
+        }
+        if (ids.isEmpty()) return "没有历史确认项。";
+        loadAppliedChanges();
+        StringBuilder out = new StringBuilder("确认项状态（以此刻检查为准）：");
+        for (String id : ids) {
+            PendingChange pending = PENDING.get(id);
+            String status = pending != null && sessionId.equals(pending.sessionId) ? "待确认" : "已取消、过期或重启失效";
+            for (AppliedChange applied : APPLIED) {
+                if (applied.id.equals(id) && applied.sessionId.equals(sessionId)) {
+                    status = applied.reverted ? "已撤回" : "已确认并保存";
+                    break;
+                }
+            }
+            out.append('\n').append(id).append(": ").append(status);
+        }
+        return out.toString();
+    }
+
+    static synchronized JsonObject recoverPreview(ToolContext context, JsonObject args) {
+        cleanupExpired();
+        try {
+            String file = toRel(requireYaml(context.getCwd(), reqString(args, "file"), true));
+            String path = reqString(args, "path");
+            boolean delete = args.has("delete") && args.get("delete").getAsBoolean();
+            Object value = delete ? null : jsonToYamlValue(args.has("value") ? args.get("value") : JsonNull.INSTANCE);
+            String expected = comparable(!delete, value);
+            for (PendingChange pending : PENDING.values()) {
+                if (pending.sessionId.equals(context.getSessionId()) && pending.fileRel.equals(file)
+                        && pending.path.equals(path) && pending.newComparable.equals(expected)) {
+                    JsonObject result = ok();
+                    result.addProperty("confirmation_id", pending.id);
+                    result.addProperty("requires_confirmation", true);
+                    result.addProperty("file", file);
+                    result.addProperty("path", path);
+                    result.addProperty("old_value", pending.oldPreview);
+                    result.addProperty("new_value", pending.newPreview);
+                    result.addProperty("message", "已找回先前创建的预览，仍需用户确认");
+                    return result;
+                }
+            }
+        } catch (Exception ignored) { }
+        return null;
+    }
+
     public static synchronized String confirmPending(String id) {
         return confirmationMessage(confirmPendingResult(id));
     }
@@ -248,6 +314,8 @@ public final class PluginConfigTool {
         if (p == null) {
             return confirmationResult(error("待确认修改不存在或已过期: " + id, "NOT_FOUND"), id);
         }
+        if (!WebAiSessionStore.acquireControl(p.sessionId))
+            return confirmationResult(error("本会话正在执行，请等待当前请求结束", "EXECUTION_ERROR"), id);
         try {
             File f = requireYaml("", p.fileRel, true);
             YamlConfiguration conf = YamlConfiguration.loadConfiguration(f);
@@ -277,11 +345,18 @@ public final class PluginConfigTool {
             result.addProperty("path", p.path);
             result.addProperty("deleted", p.delete);
             result.addProperty("message", msg);
+            try { WebAiSessionStore.recordEvent(p.sessionId, id + ": " + msg); }
+            catch (RuntimeException saveError) {
+                result.addProperty("memory_warning", saveError.getMessage());
+                result.addProperty("message", msg + "；记忆保存失败：" + saveError.getMessage());
+            }
             return result;
         } catch (Exception e) {
             JsonObject result = executionError(e);
             result.addProperty("error", "确认执行失败: " + result.get("error").getAsString());
             return confirmationResult(result, id);
+        } finally {
+            WebAiSessionStore.release(p.sessionId);
         }
     }
 
@@ -291,14 +366,22 @@ public final class PluginConfigTool {
 
     public static synchronized JsonObject cancelPendingResult(String id) {
         cleanupExpired();
-        PendingChange p = PENDING.remove(id);
+        PendingChange p = PENDING.get(id);
         if (p == null) {
             return confirmationResult(error("待确认修改不存在或已过期: " + id, "NOT_FOUND"), id);
         }
-        JsonObject result = confirmationResult(ok(), id);
-        result.addProperty("cancelled", true);
-        result.addProperty("message", "已取消待确认修改: " + id);
-        return result;
+        if (!WebAiSessionStore.acquireControl(p.sessionId))
+            return confirmationResult(error("本会话正在执行，请等待当前请求结束", "EXECUTION_ERROR"), id);
+        try {
+            PENDING.remove(id);
+            WebAiSessionStore.recordEvent(p.sessionId, "已取消待确认修改: " + id);
+            JsonObject result = confirmationResult(ok(), id);
+            result.addProperty("cancelled", true);
+            result.addProperty("message", "已取消待确认修改: " + id);
+            return result;
+        } finally {
+            WebAiSessionStore.release(p.sessionId);
+        }
     }
 
     private static JsonObject confirmationResult(JsonObject result, String id) {
@@ -667,6 +750,38 @@ public final class PluginConfigTool {
         out.addProperty("file", toRel(f));
         out.add("snippets", snippets);
         out.addProperty("truncated", chars >= MAX_SNIPPET_CHARS || snippets.size() >= MAX_SNIPPETS);
+        return out;
+    }
+
+    private static JsonObject readYamlLines(String cwd, JsonObject args) throws IOException {
+        File file = requireYaml(cwd, reqString(args, "file"), true);
+        int start = args.get("start_line").getAsInt();
+        int count = args.has("line_count") && !args.get("line_count").isJsonNull()
+                ? args.get("line_count").getAsInt() : 50;
+        if (start < 1 || count < 1 || count > 100) throw new IllegalArgumentException("invalid line range");
+        List<String> lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
+        JsonArray result = new JsonArray();
+        int index = Math.min(start - 1, lines.size());
+        int chars = 0;
+        while (index < lines.size() && result.size() < count) {
+            String line = redactSecretLine(lines.get(index));
+            if (chars + line.length() > MAX_SNIPPET_CHARS && result.size() > 0) break;
+            JsonObject item = new JsonObject();
+            if (line.length() > MAX_SNIPPET_CHARS) {
+                line = line.substring(0, MAX_SNIPPET_CHARS) + "...";
+                item.addProperty("truncated", true);
+            }
+            item.addProperty("line", index + 1);
+            item.addProperty("text", line);
+            result.add(item);
+            chars += line.length();
+            index++;
+        }
+        JsonObject out = ok();
+        out.addProperty("file", toRel(file));
+        out.addProperty("total_lines", lines.size());
+        out.add("lines", result);
+        if (index < lines.size()) out.addProperty("next_line", index + 1);
         return out;
     }
 

@@ -90,6 +90,20 @@ public class KnowledgeReviewGUI {
             if (entry.isThanked()) {
                 lore.add(Lang.get("gui.knowledge-thanked"));
             }
+            if (entry.getContextSummary() != null && !entry.getContextSummary().trim().isEmpty()) {
+                lore.add("上下文摘要:");
+                String summary = entry.getContextSummary();
+                for (int offset = 0; offset < summary.length(); offset += 32) {
+                    lore.add(summary.substring(offset, Math.min(summary.length(), offset + 32)));
+                }
+            }
+            if (entry.getRawContext() != null && !entry.getRawContext().trim().isEmpty()) {
+                lore.add("§7原始上下文：");
+                String[] contextLines = entry.getRawContext().split("\\n");
+                for (int i = Math.max(0, contextLines.length - 3); i < contextLines.length; i++) {
+                    lore.add("§8" + contextLines[i].substring(0, Math.min(contextLines[i].length(), 32)));
+                }
+            }
         } else if ("import".equals(entry.getSource())) {
             lore.add(Lang.get("gui.knowledge-source-import"));
             lore.add(Lang.get("gui.knowledge-submitter", entry.getSubmitter()));

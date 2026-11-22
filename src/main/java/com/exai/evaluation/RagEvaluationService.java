@@ -125,6 +125,15 @@ public final class RagEvaluationService {
                 detail.put("answer", result.getAnswer().getAnswer());
                 detail.put("retrievalMillis", result.getRetrievalMillis());
                 detail.put("generationMillis", result.getGenerationMillis());
+                if (result.getAnswerability() != null) {
+                    Map<String, Object> gate = new LinkedHashMap<>();
+                    gate.put("answerable", result.getAnswerability().isAnswerable());
+                    gate.put("parseStatus", result.getAnswerability().getParseStatus());
+                    gate.put("rawResponse", result.getAnswerability().getRawResponse());
+                    gate.put("evidence", result.getAnswerability().getEvidence());
+                    gate.put("reason", result.getAnswerability().getReason());
+                    detail.put("answerability", gate);
+                }
 
                 List<Map<String, Object>> retrieved = new ArrayList<>();
                 Map<String, Integer> ranks = new LinkedHashMap<>();
@@ -133,6 +142,10 @@ public final class RagEvaluationService {
                     row.put("id", doc.getDocument().getId());
                     row.put("rank", doc.getRank());
                     row.put("similarity", doc.getSimilarity());
+                    row.put("bm25Score", doc.getBm25Score());
+                    row.put("fusedScore", doc.getFusedScore());
+                    row.put("embeddingRank", doc.getEmbeddingRank());
+                    row.put("bm25Rank", doc.getBm25Rank());
                     retrieved.add(row);
                     ranks.put(doc.getDocument().getId(), doc.getRank());
                 }
@@ -219,6 +232,12 @@ public final class RagEvaluationService {
             report.put("datasetStorage", Config.storageType);
             report.put("minSimilarity", Config.minSimilarity);
             report.put("maxDocs", Config.maxDocs);
+            Map<String, Object> hybrid = new LinkedHashMap<>();
+            hybrid.put("embeddingWeight", Config.hybridEmbeddingWeight);
+            hybrid.put("bm25Weight", Config.hybridBm25Weight);
+            hybrid.put("rrfK", Config.hybridRrfK);
+            hybrid.put("candidatePoolSize", Config.hybridCandidatePoolSize);
+            report.put("hybridRetrieval", hybrid);
             report.put("knowledgeFingerprint", knowledgeFingerprint());
             report.put("promptFingerprint", promptFingerprint());
             report.put("summary", summary);
@@ -342,7 +361,8 @@ public final class RagEvaluationService {
     private static String promptFingerprint() throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         String prompts = Lang.get("prompt.base-role") + Lang.get("prompt.strict-with-docs")
-                + Lang.get("prompt.grounding-reminder") + Lang.get("prompt.rag-judge");
+                + Lang.get("prompt.grounding-reminder") + Lang.get("prompt.answerability-check")
+                + Lang.get("prompt.rag-judge");
         digest.update(prompts.getBytes(StandardCharsets.UTF_8));
         StringBuilder out = new StringBuilder();
         for (byte b : digest.digest()) out.append(String.format("%02x", b & 0xff));

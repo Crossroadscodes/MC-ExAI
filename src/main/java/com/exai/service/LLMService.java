@@ -41,6 +41,7 @@ public class LLMService {
     /** 本地工具执行器：收到模型返回的 function name 与 arguments，返回工具结果 JSON。 */
     public interface ToolExecutor {
         JsonObject execute(String name, JsonObject arguments);
+        default JsonObject recover(String name, JsonObject arguments) { return null; }
     }
 
     /** 流式工具调用监听器。 */
@@ -57,14 +58,22 @@ public class LLMService {
         private final String content;
         private final String error;
         private final int iterations;
+        private String status;
 
         public ToolChatResult(boolean ok, String content, String error, int iterations) {
             this.ok = ok;
             this.content = content;
             this.error = error;
             this.iterations = iterations;
+            this.status = ok ? "COMPLETED" : "FAILED";
         }
 
+        public static ToolChatResult paused(String reason, int iterations) {
+            ToolChatResult result = new ToolChatResult(true, reason, null, iterations);
+            result.status = "PAUSED";
+            return result;
+        }
+        public String getStatus() { return status; }
         public boolean isOk() { return ok; }
         public String getContent() { return content; }
         public String getError() { return error; }
@@ -123,60 +132,11 @@ public class LLMService {
                                             double temperature,
                                             int maxTokens,
                                             int maxIterations) {
-        JsonArray messages = new JsonArray();
-        JsonObject sys = new JsonObject();
-        sys.addProperty("role", "system");
-        sys.addProperty("content", systemPrompt == null ? "" : systemPrompt);
-        messages.add(sys);
-        appendSafeHistory(messages, historyMessages);
-        JsonObject user = new JsonObject();
-        user.addProperty("role", "user");
-        user.addProperty("content", userPrompt == null ? "" : userPrompt);
-        messages.add(user);
-
-        int limit = Math.max(1, maxIterations);
-        for (int i = 1; i <= limit; i++) {
-            try {
-                JsonObject body = new JsonObject();
-                body.addProperty("model", model);
-                body.addProperty("temperature", temperature);
-                body.addProperty("max_tokens", maxTokens);
-                body.add("messages", messages);
-                if (tools != null && tools.size() > 0) {
-                    body.add("tools", tools);
-                    body.addProperty("tool_choice", "auto");
-                }
-
-                JsonObject resp = HttpJsonClient.postJson(baseUrl + "/chat/completions", apiKey, body);
-                JsonObject msg = firstMessage(resp);
-                if (msg == null) {
-                    return new ToolChatResult(false, null, "模型响应中没有 message", i);
-                }
-                if (!msg.has("role")) {
-                    msg.addProperty("role", "assistant");
-                }
-                messages.add(msg.deepCopy());
-
-                JsonArray toolCalls = getToolCalls(msg);
-                if (toolCalls != null && toolCalls.size() > 0) {
-                    for (JsonElement el : toolCalls) {
-                        JsonObject toolMsg = runToolCall(executor, el);
-                        messages.add(toolMsg);
-                    }
-                    continue;
-                }
-
-                String content = contentOf(msg);
-                if (content == null || content.trim().isEmpty()) {
-                    return new ToolChatResult(false, null, "模型未返回内容", i);
-                }
-                return new ToolChatResult(true, content.trim(), null, i);
-            } catch (Exception e) {
-                System.err.println("LLM tool call error: " + e.getMessage());
-                return new ToolChatResult(false, null, e.getMessage(), i);
-            }
-        }
-        return new ToolChatResult(false, null, "工具调用轮次过多，已停止", limit);
+        ToolConversation state = new ToolConversation();
+        appendSafeHistory(state.messages, historyMessages);
+        state.addText("user", userPrompt == null ? "" : userPrompt);
+        return runWithTools(systemPrompt, state, tools, executor, null, temperature, maxTokens,
+                maxIterations, 24000, 8, 4000, () -> {});
     }
 
     public ToolChatResult completeWithToolsStreaming(String systemPrompt,
@@ -188,64 +148,183 @@ public class LLMService {
                                                      double temperature,
                                                      int maxTokens,
                                                      int maxIterations) {
-        JsonArray messages = new JsonArray();
-        JsonObject sys = new JsonObject();
-        sys.addProperty("role", "system");
-        sys.addProperty("content", systemPrompt == null ? "" : systemPrompt);
-        messages.add(sys);
-        appendSafeHistory(messages, historyMessages);
-        JsonObject user = new JsonObject();
-        user.addProperty("role", "user");
-        user.addProperty("content", userPrompt == null ? "" : userPrompt);
-        messages.add(user);
+        ToolConversation state = new ToolConversation();
+        appendSafeHistory(state.messages, historyMessages);
+        state.addText("user", userPrompt == null ? "" : userPrompt);
+        return runWithTools(systemPrompt, state, tools, executor, listener, temperature, maxTokens,
+                maxIterations, 24000, 8, 4000, () -> {});
+    }
 
+    public interface Checkpoint { void save(); }
+
+    /** A completed tool response is persisted before advancing to the next tool/model request. */
+    public ToolChatResult runWithTools(String systemPrompt, ToolConversation state, JsonArray tools,
+                                      ToolExecutor executor, ToolStreamListener listener, double temperature,
+                                      int maxTokens, int maxIterations, int contextChars, int recentGroups,
+                                      int summaryChars, Checkpoint checkpoint) {
         int limit = Math.max(1, maxIterations);
-        for (int i = 1; i <= limit; i++) {
-            try {
+        state.status = "RUNNING";
+        state.reason = "";
+        state.iterations = 0;
+        try {
+            checkpoint.save();
+            finishPendingTools(state, executor, listener, checkpoint);
+            if (!state.pendingInput.isEmpty()) {
+                state.addText("user", state.pendingInput);
+                state.pendingInput = "";
+                checkpoint.save();
+            }
+            for (int i = 1; i <= limit; i++) {
+                JsonArray messages = ConversationContext.prepare(state, systemPrompt, contextChars,
+                        recentGroups, summaryChars, prompt -> complete(prompt, 0.0, Math.max(512, summaryChars)));
+                state.iterations = i;
+                state.totalIterations++;
+                checkpoint.save();
                 JsonObject body = new JsonObject();
                 body.addProperty("model", model);
                 body.addProperty("temperature", temperature);
                 body.addProperty("max_tokens", maxTokens);
-                body.addProperty("stream", true);
                 body.add("messages", messages);
                 if (tools != null && tools.size() > 0) {
                     body.add("tools", tools);
                     body.addProperty("tool_choice", "auto");
                 }
-
-                StreamAccumulator acc = new StreamAccumulator(listener);
-                HttpJsonClient.postJsonStream(baseUrl + "/chat/completions", apiKey, body, acc);
-                JsonObject msg = acc.toAssistantMessage();
-                messages.add(msg.deepCopy());
-
-                JsonArray toolCalls = getToolCalls(msg);
-                if (toolCalls != null && toolCalls.size() > 0) {
-                    for (JsonElement el : toolCalls) {
-                        String name = toolName(el);
-                        if (listener != null) {
-                            listener.onToolCallStarted(name == null ? "unknown" : name);
-                        }
-                        JsonObject toolMsg = runToolCall(executor, el);
-                        if (listener != null) {
-                            JsonObject result = parseToolResult(toolMsg);
-                            listener.onToolCallFinished(name == null ? "unknown" : name, result);
-                        }
-                        messages.add(toolMsg);
+                JsonObject msg = requestToolMessage(body, listener);
+                if (msg == null) throw new IOException("模型响应中没有 message");
+                if (!msg.has("role")) msg.addProperty("role", "assistant");
+                JsonArray calls = getToolCalls(msg);
+                if (calls != null) {
+                    java.util.Set<String> ids = new java.util.HashSet<>();
+                    for (JsonElement call : calls) {
+                        String id = str(call.getAsJsonObject(), "id");
+                        if (id == null || id.isEmpty() || !ids.add(id))
+                            throw new IOException("工具调用 ID 缺失或重复，未执行此批调用");
                     }
+                }
+                String content = contentOf(msg);
+                if ((calls == null || calls.size() == 0) && (content == null || content.trim().isEmpty()))
+                    throw new IOException("模型未返回内容");
+                state.add(msg);
+                checkpoint.save();
+                if (calls != null && calls.size() > 0) {
+                    finishPendingTools(state, executor, listener, checkpoint);
                     continue;
                 }
-
-                String content = contentOf(msg);
-                if (content == null || content.trim().isEmpty()) {
-                    return new ToolChatResult(false, null, "模型未返回内容", i);
-                }
+                state.status = "COMPLETED";
+                checkpoint.save();
                 return new ToolChatResult(true, content.trim(), null, i);
-            } catch (Exception e) {
-                System.err.println("LLM streaming tool call error: " + e.getMessage());
-                return new ToolChatResult(false, null, e.getMessage(), i);
+            }
+            state.status = "PAUSED";
+            state.reason = "已达到本次 " + limit + " 轮模型调用上限，进度已保存。点击继续或输入 /continue 可接着执行。";
+            checkpoint.save();
+            return ToolChatResult.paused(state.reason, state.iterations);
+        } catch (Exception e) {
+            state.status = "FAILED";
+            state.reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            try { checkpoint.save(); } catch (Exception saveError) { state.reason = saveError.getMessage(); }
+            return new ToolChatResult(false, null, state.reason, state.iterations);
+        }
+    }
+
+    /** Transport seam used by deterministic tests. No partial streaming calls are executable. */
+    protected JsonObject requestToolMessage(JsonObject body, ToolStreamListener listener) throws IOException {
+        if (listener == null) {
+            JsonObject response = postTracked(body);
+            if (response != null && response.has("choices") && response.getAsJsonArray("choices").size() > 0) {
+                String reason = str(response.getAsJsonArray("choices").get(0).getAsJsonObject(), "finish_reason");
+                checkFinishReason(reason);
+            }
+            return firstMessage(response);
+        }
+        body.addProperty("stream", true);
+        StreamAccumulator acc = new StreamAccumulator(listener);
+        final JsonObject[] usage = new JsonObject[1];
+        try {
+            HttpJsonClient.postJsonStream(baseUrl + "/chat/completions", apiKey, body, acc,
+                    data -> { if (data.has("usage") && data.get("usage").isJsonObject()) usage[0] = data.getAsJsonObject("usage"); });
+            TokenUsageStore.record(model, usage[0]);
+        } catch (IOException e) {
+            TokenUsageStore.record(model, null);
+            throw e;
+        }
+        if (!acc.done) throw new IOException("模型流式响应中断，未执行不完整的工具调用");
+        checkFinishReason(acc.finishReason);
+        return acc.toAssistantMessage();
+    }
+
+    private static void checkFinishReason(String reason) throws IOException {
+        if ("length".equals(reason) || "content_filter".equals(reason))
+            throw new IOException("模型响应未完整结束: " + reason + "；未执行此批工具调用");
+    }
+
+    private void finishPendingTools(ToolConversation state, ToolExecutor executor,
+                                    ToolStreamListener listener, Checkpoint checkpoint) throws IOException {
+        int assistantIndex = -1;
+        for (int i = state.messages.size() - 1; i >= 0; i--) {
+            JsonObject message = state.messages.get(i).getAsJsonObject();
+            if ("assistant".equals(str(message, "role"))) { assistantIndex = i; break; }
+        }
+        if (assistantIndex < 0) return;
+        JsonArray calls = getToolCalls(state.messages.get(assistantIndex).getAsJsonObject());
+        if (calls == null) return;
+        for (JsonElement call : calls) {
+            String id = str(call.getAsJsonObject(), "id");
+            if (id == null || id.isEmpty()) throw new IOException("工具调用缺少 id，无法可靠恢复");
+            boolean completed = false;
+            for (int j = assistantIndex + 1; j < state.messages.size(); j++) {
+                JsonObject message = state.messages.get(j).getAsJsonObject();
+                if ("tool".equals(str(message, "role")) && id.equals(str(message, "tool_call_id"))) completed = true;
+            }
+            if (completed) continue;
+            String name = toolName(call);
+            boolean uncertain = state.startedCalls.contains(id);
+            if (!uncertain) state.startedCalls.add(id);
+            checkpoint.save();
+            if (listener != null) listener.onToolCallStarted(name == null ? "unknown" : name);
+            JsonObject result;
+            if (uncertain && !isReadOnlyTool(name)) {
+                JsonObject recovered = null;
+                try {
+                    JsonObject fn = call.getAsJsonObject().getAsJsonObject("function");
+                    if (executor != null) recovered = executor.recover(name,
+                            JsonParser.parseString(str(fn, "arguments")).getAsJsonObject());
+                } catch (RuntimeException ignored) { }
+                result = toolMessage(id, recovered == null
+                        ? errorJson("上次调用执行结果未知，禁止直接重放。请核查当前配置和确认项，再决定是否生成新预览。") : recovered);
+            } else result = runToolCall(executor, call);
+            state.add(result);
+            state.startedCalls.remove(id);
+            checkpoint.save();
+            if (listener != null) listener.onToolCallFinished(name == null ? "unknown" : name, parseToolResult(result));
+        }
+    }
+
+    private static boolean isReadOnlyTool(String name) {
+        return "list_plugin_yaml".equals(name) || "list_yaml_keys".equals(name) || "get_yaml_value".equals(name)
+                || "search_yaml_keys".equals(name) || "list_plugins".equals(name) || "search_plugins".equals(name)
+                || "get_plugin_metadata".equals(name) || "find_plugin_files".equals(name)
+                || "search_yaml_values".equals(name) || "read_yaml_snippet".equals(name);
+    }
+
+    /** Close incomplete groups before a new user request or control-event message is appended. */
+    public static void closePendingCalls(ToolConversation state) {
+        int lastAssistant = -1;
+        for (int i = state.messages.size() - 1; i >= 0; i--) {
+            if ("assistant".equals(str(state.messages.get(i).getAsJsonObject(), "role"))) { lastAssistant = i; break; }
+        }
+        if (lastAssistant >= 0) {
+            java.util.Set<String> answered = new java.util.HashSet<>();
+            for (int j = lastAssistant + 1; j < state.messages.size(); j++) {
+                JsonObject message = state.messages.get(j).getAsJsonObject();
+                if ("tool".equals(str(message, "role"))) answered.add(str(message, "tool_call_id"));
+            }
+            JsonArray calls = getToolCalls(state.messages.get(lastAssistant).getAsJsonObject());
+            if (calls != null) for (JsonElement call : calls) {
+                String id = str(call.getAsJsonObject(), "id");
+                if (!answered.contains(id)) state.add(toolMessage(id, errorJson("任务中断，调用未完成或结果未知；请核查后再操作。")));
             }
         }
-        return new ToolChatResult(false, null, "工具调用轮次过多，已停止", limit);
+        state.startedCalls.clear();
     }
 
     private static void appendSafeHistory(JsonArray messages, JsonArray history) {
@@ -398,7 +477,7 @@ public class LLMService {
         messages.add(userMsg);
         body.add("messages", messages);
 
-        return parseContent(HttpJsonClient.postJson(baseUrl + "/chat/completions", apiKey, body));
+        return parseContent(postTracked(body));
     }
 
     private String request(String prompt, double temperature, int maxTokens) throws Exception {
@@ -414,8 +493,20 @@ public class LLMService {
         messages.add(userMsg);
         body.add("messages", messages);
 
-        return parseContent(HttpJsonClient.postJson(
-                baseUrl + "/chat/completions", apiKey, body));
+        return parseContent(postTracked(body));
+    }
+
+    private JsonObject postTracked(JsonObject body) throws IOException {
+        try {
+            JsonObject response = HttpJsonClient.postJson(baseUrl + "/chat/completions", apiKey, body);
+            JsonObject usage = response != null && response.has("usage") && response.get("usage").isJsonObject()
+                    ? response.getAsJsonObject("usage") : null;
+            TokenUsageStore.record(model, usage);
+            return response;
+        } catch (IOException e) {
+            TokenUsageStore.record(model, null);
+            throw e;
+        }
     }
 
     private static String parseContent(JsonObject resp) {
@@ -426,6 +517,8 @@ public class LLMService {
     private static final class StreamAccumulator implements HttpJsonClient.StreamHandler {
         private final ToolStreamListener listener;
         private final StringBuilder content = new StringBuilder();
+        private boolean done;
+        private String finishReason;
         private final Map<Integer, ToolCallPart> toolCalls = new LinkedHashMap<>();
 
         StreamAccumulator(ToolStreamListener listener) {
@@ -442,6 +535,8 @@ public class LLMService {
                 return;
             }
             JsonObject choice = choices.get(0).getAsJsonObject();
+            String finish = str(choice, "finish_reason");
+            if (finish != null) finishReason = finish;
             if (!choice.has("delta") || !choice.get("delta").isJsonObject()) {
                 return;
             }
@@ -465,6 +560,7 @@ public class LLMService {
 
         @Override
         public void onDone() {
+            done = true;
         }
 
         JsonObject toAssistantMessage() {

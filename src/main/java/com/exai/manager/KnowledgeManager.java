@@ -75,6 +75,16 @@ public class KnowledgeManager {
      * @return 是否成功入队（重复问题或写入失败时返回 false）
      */
     public static boolean submitAutoCollected(String question, String answer, String answererName, boolean thanked) {
+        return submitAutoCollected(question, answer, answererName, thanked, "");
+    }
+
+    public static boolean submitAutoCollected(String question, String answer, String answererName,
+                                              boolean thanked, String contextSummary) {
+        return submitAutoCollected(question, answer, answererName, thanked, contextSummary, "");
+    }
+
+    public static boolean submitAutoCollected(String question, String answer, String answererName,
+                                              boolean thanked, String contextSummary, String rawContext) {
         if (question == null || answer == null) {
             return false;
         }
@@ -88,6 +98,8 @@ public class KnowledgeManager {
                 answererName == null ? "" : answererName, System.currentTimeMillis());
         entry.setSource("auto");
         entry.setThanked(thanked);
+        entry.setContextSummary(contextSummary);
+        entry.setRawContext(rawContext);
 
         int dbId = DataUtils.insertPendingKnowledge(entry);
         if (dbId == -1) {

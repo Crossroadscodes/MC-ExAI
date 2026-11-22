@@ -3,12 +3,19 @@ package com.exai.web;
 import com.exai.ExAI;
 import com.exai.config.Config;
 import com.exai.data.DataContainer;
+import com.exai.entity.LogEntry;
 import com.exai.entity.KnowledgeEntry;
 import com.exai.entity.PluginDescriptionEntry;
+import com.exai.evaluation.EvaluationAnnotationService;
+import com.exai.evaluation.EvaluationCase;
+import com.exai.evaluation.EvaluationTestStore;
+import com.exai.evaluation.ExpectedBehavior;
+import com.exai.manager.KnowledgeIdService;
 import com.exai.manager.KnowledgeFileManager;
 import com.exai.manager.KnowledgeIdService;
 import com.exai.manager.PluginDescriptionManager;
 import com.exai.manager.PluginHelpProbe;
+import com.exai.service.TokenUsageStore;
 import com.exai.evaluation.RagEvaluationService;
 import com.exai.web.tool.ToolContext;
 import com.google.gson.Gson;
@@ -111,6 +118,7 @@ public class WebServer {
             server.createContext("/api/auth/logout", WebServer::handleLogout);
             server.createContext("/api/auth/session", WebServer::handleSession);
             createProtectedContext("/api/config", WebServer::handleConfig);
+            createProtectedContext("/api/usage/daily", WebServer::handleDailyUsage);
             createProtectedContext("/api/files/list", WebServer::handleFileList);
             createProtectedContext("/api/files/read", WebServer::handleFileRead);
             createProtectedContext("/api/files/write", WebServer::handleFileWrite);
@@ -132,6 +140,10 @@ public class WebServer {
             createProtectedContext("/api/knowledge/delete", WebServer::handleKnowledgeDelete);
             createProtectedContext("/api/knowledge/migrate-db", WebServer::handleKnowledgeMigrateDb);
             createProtectedContext("/api/knowledge", WebServer::handleKnowledgeList);
+            createProtectedContext("/api/rag-dataset", WebServer::handleRagDataset);
+            createProtectedContext("/api/rag-dataset/logs", WebServer::handleRagDatasetLogs);
+            createProtectedContext("/api/rag-dataset/migrate", WebServer::handleRagDatasetMigrate);
+            createProtectedContext("/api/rag-dataset/knowledge", WebServer::handleRagDatasetKnowledge);
             server.createContext("/", WebServer::handleRoot);
             server.start();
             boundHost = Config.webuiHost;
@@ -417,6 +429,18 @@ public class WebServer {
         } finally {
             ex.close();
         }
+    }
+
+    private static void handleDailyUsage(HttpExchange ex) throws IOException {
+        try {
+            if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+                sendText(ex, 405, "Method Not Allowed");
+                return;
+            }
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("days", TokenUsageStore.recent(30));
+            sendJson(ex, 200, result);
+        } finally { ex.close(); }
     }
 
     // ====== 文件管理（根目录限定在 plugins/ 下，含路径越界防护） ======
@@ -841,6 +865,241 @@ public class WebServer {
         } catch (Exception e) {
             return s;
         }
+    }
+
+    // ====== RAG evaluation dataset ======
+
+    private static void handleRagDataset(HttpExchange ex) throws IOException {
+        try {
+            String method = ex.getRequestMethod();
+            if ("GET".equalsIgnoreCase(method)) {
+                List<Map<String, Object>> cases = new ArrayList<>();
+                for (EvaluationCase item : EvaluationTestStore.readAll()) {
+                    cases.add(evaluationCaseMap(item));
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("cases", cases);
+                sendJson(ex, 200, out);
+                return;
+            }
+            if ("POST".equalsIgnoreCase(method)) {
+                Map<String, Object> req = GSON.fromJson(readBody(ex), new TypeToken<Map<String, Object>>() {}.getType());
+                EvaluationCase item = parseEvaluationCase(req);
+                if (!EvaluationAnnotationService.isValid(item)) {
+                    sendError(ex, 400, "用例无效：ANSWER 需要答案和有效知识 ID，REFUSE 必须清空答案与 ID");
+                    return;
+                }
+                String fingerprint = stringValue(req.get("sourceLogFingerprint"));
+                if (fingerprint.trim().isEmpty()) fingerprint = "manual_" + java.util.UUID.randomUUID().toString().replace("-", "");
+                EvaluationCase saved = EvaluationTestStore.upsert(fingerprint, item);
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("ok", true);
+                out.put("case", evaluationCaseMap(saved));
+                sendJson(ex, 200, out);
+                return;
+            }
+            if ("DELETE".equalsIgnoreCase(method)) {
+                Map<String, String> params = query(ex);
+                String id = params.get("id");
+                if (id == null || id.trim().isEmpty()) {
+                    sendError(ex, 400, "缺少用例 ID");
+                    return;
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("ok", EvaluationTestStore.delete(id));
+                sendJson(ex, 200, out);
+                return;
+            }
+            ex.getResponseHeaders().set("Allow", "GET, POST, DELETE");
+            sendText(ex, 405, "Method Not Allowed");
+        } catch (Exception e) {
+            sendError(ex, 400, safeMessage(e));
+        } finally { ex.close(); }
+    }
+
+    private static void handleRagDatasetLogs(HttpExchange ex) throws IOException {
+        try {
+            if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Allow", "GET");
+                sendText(ex, 405, "Method Not Allowed");
+                return;
+            }
+            Map<String, String> params = query(ex);
+            int page = Math.max(0, parseInt(params.get("page"), 0));
+            int size = Math.max(1, Math.min(100, parseInt(params.get("size"), 20)));
+            int total = DataContainer.storage == null ? 0 : DataContainer.storage.getLogTotalCount();
+            List<Map<String, Object>> logs = new ArrayList<>();
+            if (DataContainer.storage != null) {
+                for (LogEntry log : DataContainer.storage.getLogPage(page, size)) {
+                    String fingerprint = EvaluationAnnotationService.logFingerprint(log);
+                    EvaluationCase draft = EvaluationAnnotationService.createDraft(log);
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("logId", log.getId());
+                    row.put("playerName", log.getPlayerName());
+                    row.put("createTime", log.getCreateTime());
+                    row.put("source", log.getSource());
+                    row.put("status", log.getRagStatus().name());
+                    String retrievalQuestion = log.getRetrievalQuestion() == null
+                            ? "" : log.getRetrievalQuestion().trim();
+                    row.put("playerInput", log.getPlayerInput());
+                    row.put("retrievalQuestion", retrievalQuestion);
+                    row.put("question", retrievalQuestion.isEmpty()
+                            ? draft.getQuestion() : retrievalQuestion);
+                    row.put("behavior", draft.getExpectedBehavior() == null ? "" : draft.getExpectedBehavior().name());
+                    row.put("answer", draft.getReferenceAnswer());
+                    row.put("knowledgeIds", draft.getExpectedKnowledgeIds());
+                    row.put("fingerprint", fingerprint);
+                    row.put("migrated", EvaluationTestStore.findByLogFingerprint(fingerprint) != null);
+                    logs.add(row);
+                }
+            }
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("page", page);
+            out.put("size", size);
+            out.put("total", total);
+            out.put("logs", logs);
+            sendJson(ex, 200, out);
+        } catch (Exception e) {
+            sendError(ex, 500, safeMessage(e));
+        } finally { ex.close(); }
+    }
+
+    private static void handleRagDatasetMigrate(HttpExchange ex) throws IOException {
+        try {
+            if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Allow", "POST");
+                sendText(ex, 405, "Method Not Allowed");
+                return;
+            }
+            Map<String, Object> req = GSON.fromJson(readBody(ex), new TypeToken<Map<String, Object>>() {}.getType());
+            Object rawItems = req == null ? null : req.get("items");
+            if (!(rawItems instanceof List) || ((List<?>) rawItems).isEmpty()) {
+                sendError(ex, 400, "请选择至少一条日志");
+                return;
+            }
+            List<Map<String, Object>> results = new ArrayList<>();
+            int savedCount = 0;
+            for (Object raw : (List<?>) rawItems) {
+                Map<String, Object> result = new LinkedHashMap<>();
+                try {
+                    if (!(raw instanceof Map)) throw new IllegalArgumentException("日志条目格式无效");
+                    @SuppressWarnings("unchecked") Map<String, Object> entry = (Map<String, Object>) raw;
+                    result.put("sourceLogFingerprint", stringValue(entry.get("sourceLogFingerprint")));
+                    EvaluationCase item = parseEvaluationCase(entry);
+                    if (!EvaluationAnnotationService.isValid(item)) {
+                        throw new IllegalArgumentException("ANSWER 需要答案和有效知识 ID；REFUSE 必须清空答案与 ID");
+                    }
+                    String fingerprint = stringValue(entry.get("sourceLogFingerprint"));
+                    if (fingerprint.trim().isEmpty()) throw new IllegalArgumentException("日志指纹缺失");
+                    EvaluationCase saved = EvaluationTestStore.upsert(fingerprint, item);
+                    result.put("ok", true);
+                    result.put("case", evaluationCaseMap(saved));
+                    savedCount++;
+                } catch (Exception itemError) {
+                    result.put("ok", false);
+                    result.put("error", safeMessage(itemError));
+                }
+                results.add(result);
+            }
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", savedCount > 0);
+            out.put("savedCount", savedCount);
+            out.put("results", results);
+            sendJson(ex, 200, out);
+        } catch (Exception e) {
+            sendError(ex, 400, safeMessage(e));
+        } finally { ex.close(); }
+    }
+
+    private static void handleRagDatasetKnowledge(HttpExchange ex) throws IOException {
+        try {
+            if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Allow", "GET");
+                sendText(ex, 405, "Method Not Allowed");
+                return;
+            }
+            String id = query(ex).get("id");
+            if (id == null || id.trim().isEmpty()) {
+                sendError(ex, 400, "缺少知识 ID");
+                return;
+            }
+            Map<String, Object> out = new LinkedHashMap<>();
+            if (id.startsWith("plugin_")) {
+                String name = id.substring("plugin_".length());
+                for (PluginDescriptionEntry plugin : PluginDescriptionManager.readAll()) {
+                    if (name.equals(plugin.getName()) && plugin.isEnabled()
+                            && plugin.getDescription() != null && !plugin.getDescription().trim().isEmpty()) {
+                        out.put("id", id);
+                        out.put("question", plugin.getName() + " 插件描述");
+                        out.put("content", plugin.getDescription());
+                        sendJson(ex, 200, out);
+                        return;
+                    }
+                }
+            } else {
+                for (KnowledgeEntry entry : KnowledgeFileManager.readAll()) {
+                    String entryId = entry.getKnowledgeId();
+                    if (entryId == null || entryId.trim().isEmpty()) entryId = KnowledgeIdService.documentId(entry);
+                    if (id.equals(entryId)) {
+                        out.put("id", entryId);
+                        out.put("question", entry.getQuestion());
+                        out.put("content", entry.getAnswer());
+                        sendJson(ex, 200, out);
+                        return;
+                    }
+                }
+            }
+            sendError(ex, 404, "未找到该知识 ID 对应的知识块");
+        } catch (Exception e) {
+            sendError(ex, 500, safeMessage(e));
+        } finally { ex.close(); }
+    }
+
+    private static EvaluationCase parseEvaluationCase(Map<String, Object> req) {
+        if (req == null) throw new IllegalArgumentException("请求内容无效");
+        EvaluationCase item = new EvaluationCase();
+        item.setId(stringValue(req.get("id")));
+        item.setEnabled(!Boolean.FALSE.equals(req.get("enabled"))
+                && !"false".equalsIgnoreCase(stringValue(req.get("enabled"))));
+        item.setQuestion(stringValue(req.get("question")).trim());
+        try {
+            item.setExpectedBehavior(ExpectedBehavior.valueOf(
+                    stringValue(req.get("behavior")).trim().toUpperCase(java.util.Locale.ROOT)));
+        } catch (Exception e) {
+            throw new IllegalArgumentException("预期行为必须是 ANSWER 或 REFUSE");
+        }
+        item.setReferenceAnswer(stringValue(req.get("answer")).trim());
+        Object rawIds = req.get("knowledgeIds");
+        if (rawIds instanceof List) {
+            List<String> ids = new ArrayList<>();
+            for (Object value : (List<?>) rawIds) ids.add(stringValue(value));
+            item.setExpectedKnowledgeIds(EvaluationAnnotationService.parseKnowledgeIds(String.join(",", ids)));
+        } else {
+            item.setExpectedKnowledgeIds(EvaluationAnnotationService.parseKnowledgeIds(stringValue(rawIds)));
+        }
+        return item;
+    }
+
+    private static Map<String, Object> evaluationCaseMap(EvaluationCase item) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", item.getId());
+        row.put("enabled", item.isEnabled());
+        row.put("sourceLogFingerprint", item.getSourceLogFingerprint());
+        row.put("question", item.getQuestion());
+        row.put("behavior", item.getExpectedBehavior().name());
+        row.put("answer", item.getReferenceAnswer());
+        row.put("knowledgeIds", item.getExpectedKnowledgeIds());
+        row.put("updatedAt", item.getUpdatedAt());
+        return row;
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private static String safeMessage(Exception e) {
+        String message = e.getMessage();
+        return message == null || message.trim().isEmpty() ? "请求处理失败" : message;
     }
 
     private static void sendError(HttpExchange ex, int code, String msg) throws IOException {
@@ -1269,6 +1528,10 @@ public class WebServer {
         groups.add(group("知识匹配", "Knowledge matching",
                 field("knowledge.minSimilarity", "最低相似度", "Min similarity", T_DOUBLE),
                 field("knowledge.maxDocs", "单次最多注入文档数", "Max docs per answer", T_INT),
+                field("knowledge.hybrid.embeddingWeight", "Embedding RRF 权重", "Embedding RRF weight", T_DOUBLE),
+                field("knowledge.hybrid.bm25Weight", "BM25 RRF 权重", "BM25 RRF weight", T_DOUBLE),
+                field("knowledge.hybrid.rrfK", "RRF 常数", "RRF constant", T_INT),
+                field("knowledge.hybrid.candidatePoolSize", "每路候选数", "Candidates per retrieval branch", T_INT),
                 field("knowledge.maxPendingKnowledgePerPlayer", "每玩家最多待审核数", "Max pending per player", T_INT),
                 field("knowledge.playerSubmitReview.enabled", "玩家提交 AI 初审", "AI pre-review on player submit", T_BOOLEAN)));
         groups.add(group("RAG 评估", "RAG evaluation",

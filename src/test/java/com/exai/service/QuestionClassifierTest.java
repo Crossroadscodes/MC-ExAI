@@ -3,6 +3,7 @@ package com.exai.service;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class QuestionClassifierTest {
 
@@ -36,6 +37,71 @@ public class QuestionClassifierTest {
                 new QuestionClassifier(new StubLlm("{\"isQuestion\":false}")).classify("没啥用"));
         assertEquals(QuestionClassifier.Result.UNAVAILABLE,
                 new QuestionClassifier(new StubLlm(null)).classify("没啥用"));
+    }
+
+    @Test
+    public void contextualRewriteOnlyAcceptsCompleteStandaloneQuestion() {
+        StubLlm llm = new StubLlm("{\"isQuestion\":true,\"standaloneQuestion\":\"如何打开服务器商店？\"}");
+        QuestionClassifier.ContextualResult result = new QuestionClassifier(llm)
+                .rewriteWithContext("那怎么打开？", "玩家A: 服务器商店在哪？");
+        assertEquals(QuestionClassifier.Result.QUESTION, result.getResult());
+        assertEquals("如何打开服务器商店？", result.getStandaloneQuestion());
+
+        result = new QuestionClassifier(new StubLlm("{\"isQuestion\":false,\"standaloneQuestion\":\"\"}"))
+                .rewriteWithContext("算了", "玩家A: 服务器商店在哪？");
+        assertEquals(QuestionClassifier.Result.NOT_QUESTION, result.getResult());
+        assertTrue(result.getStandaloneQuestion().isEmpty());
+    }
+
+    @Test
+    public void rejectsUnchangedOrPunctuationOnlyRewrites() {
+        QuestionClassifier classifier = new QuestionClassifier(
+                new StubLlm("{\"isQuestion\":true,\"standaloneQuestion\":\"?????\"}"));
+        QuestionClassifier.ContextualResult result = classifier.rewriteWithContext(
+                "?????", "??A: ????????");
+        assertEquals(QuestionClassifier.Result.UNAVAILABLE, result.getResult());
+        assertTrue(result.getStandaloneQuestion().isEmpty());
+    }
+
+    @Test
+    public void rechecksRewrittenQuestionWithoutContext() {
+        for (QuestionClassifier.Result validation : QuestionClassifier.Result.values()) {
+            final String[] checked = {null};
+            QuestionClassifier classifier = new QuestionClassifier(null) {
+                @Override
+                public ContextualResult rewriteWithContext(String input, String context) {
+                    return new ContextualResult(Result.QUESTION, "How to open the shop?");
+                }
+
+                @Override
+                public Result classify(String input) {
+                    checked[0] = input;
+                    return validation;
+                }
+            };
+            QuestionClassifier.ContextualResult result = classifier.rewriteAndValidate("How?", "Shop");
+            assertEquals("How to open the shop?", checked[0]);
+            assertEquals(validation, result.getResult());
+            assertEquals(validation == QuestionClassifier.Result.QUESTION ? "How to open the shop?" : "",
+                    result.getStandaloneQuestion());
+        }
+    }
+
+    @Test
+    public void doesNotRecheckFailedRewrite() {
+        QuestionClassifier classifier = new QuestionClassifier(null) {
+            @Override
+            public ContextualResult rewriteWithContext(String input, String context) {
+                return new ContextualResult(Result.NOT_QUESTION, "");
+            }
+
+            @Override
+            public Result classify(String input) {
+                throw new AssertionError("Failed rewrites must not be classified");
+            }
+        };
+        assertEquals(QuestionClassifier.Result.NOT_QUESTION,
+                classifier.rewriteAndValidate("How?", "Shop").getResult());
     }
 
     private static final class StubLlm extends LLMService {

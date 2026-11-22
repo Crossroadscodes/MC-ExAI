@@ -2,6 +2,7 @@ package com.exai.web;
 
 import com.exai.config.Config;
 import com.exai.service.LLMService;
+import com.exai.service.ToolConversation;
 import com.exai.web.tool.ToolContext;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -19,9 +20,6 @@ import java.util.Map;
  * YAML 配置修改；写入前必须先生成预览和确认 ID，再由用户输入 {@code 确认 <id>} 执行。
  */
 public final class WebCli {
-    private static final int MAX_FAILED_PROCESS_CHARS = 2800;
-    private static final int MAX_FAILURE_REASON_CHARS = 700;
-
     private WebCli() {}
 
     public interface StreamSink {
@@ -38,6 +36,13 @@ public final class WebCli {
     }
 
     public static Map<String, Object> exec(String cmdLine, String cwd, String aiSessionId) {
+        String sid = WebAiSessionStore.ensure(aiSessionId);
+        if (!WebAiSessionStore.acquire(sid)) return errorResult(normCwd(cwd), sid, "本会话正在执行，请等待当前请求结束");
+        try { return execLocked(cmdLine, cwd, sid); }
+        finally { WebAiSessionStore.release(sid); }
+    }
+
+    private static Map<String, Object> execLocked(String cmdLine, String cwd, String aiSessionId) {
         String normCwd = normCwd(cwd);
         String sid = WebAiSessionStore.ensure(aiSessionId);
         Map<String, Object> res = baseResult(true, normCwd, sid);
@@ -50,6 +55,7 @@ public final class WebCli {
             String control = handleControl(input, sid);
             if (control != null) {
                 res.put("output", control);
+                res.putAll(WebAiSessionStore.taskMeta(sid));
                 return res;
             }
 
@@ -61,13 +67,25 @@ public final class WebCli {
             res.put("ok", false);
             res.put("output", "拒绝: " + se.getMessage());
         } catch (Exception e) {
+            WebAiSessionStore.interrupted(sid, e);
             res.put("ok", false);
             res.put("output", "错误: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+        res.putAll(WebAiSessionStore.taskMeta(sid));
         return res;
     }
 
     public static void execStream(String cmdLine, String cwd, String aiSessionId, StreamSink sink) throws IOException {
+        String sid = WebAiSessionStore.ensure(aiSessionId);
+        if (!WebAiSessionStore.acquire(sid)) {
+            sink.error(errorResult(normCwd(cwd), sid, "本会话正在执行，请等待当前请求结束"));
+            return;
+        }
+        try { execStreamLocked(cmdLine, cwd, sid, sink); }
+        finally { WebAiSessionStore.release(sid); }
+    }
+
+    private static void execStreamLocked(String cmdLine, String cwd, String aiSessionId, StreamSink sink) throws IOException {
         String normCwd = normCwd(cwd);
         String sid = WebAiSessionStore.ensure(aiSessionId);
         sink.meta(baseResult(true, normCwd, sid));
@@ -98,6 +116,7 @@ public final class WebCli {
         } catch (SecurityException se) {
             sink.error(errorResult(normCwd, sid, "拒绝: " + se.getMessage()));
         } catch (Exception e) {
+            WebAiSessionStore.interrupted(sid, e);
             sink.error(errorResult(normCwd, sid, "错误: " + e.getClass().getSimpleName() + ": " + e.getMessage()));
         }
     }
@@ -108,6 +127,7 @@ public final class WebCli {
         res.put("cwd", cwd);
         res.put("aiSessionId", sessionId);
         res.put("output", "");
+        res.putAll(WebAiSessionStore.taskMeta(sessionId));
         return res;
     }
 
@@ -141,6 +161,7 @@ public final class WebCli {
             return help();
         }
         if ("reset".equals(lower) || "重置".equals(op) || "重置对话".equals(op) || "清空对话".equals(op)) {
+            PluginConfigTool.cancelSessionPending(sessionId);
             WebAiSessionStore.reset(sessionId);
             return "对话已重置";
         }
@@ -202,6 +223,7 @@ public final class WebCli {
         if (!changes.isOk()) {
             return changes.getError();
         }
+        PluginConfigTool.cancelSessionPending(sessionId);
         WebAiSessionStore.RewindResult conversation = WebAiSessionStore.rewindFrom(sessionId, turnId);
         if (!conversation.isOk()) {
             return conversation.getError();
@@ -211,111 +233,87 @@ public final class WebCli {
     }
 
     private static String doAi(String cwd, String request, String sessionId) {
-        if (request.trim().isEmpty()) {
-            throw new CliException("请输入自然语言需求，例如：帮我找一下远征插件的配置文件有哪些");
-        }
-        JsonArray history = WebAiSessionStore.history(sessionId);
-        long turnId = WebAiSessionStore.beginTurn(sessionId);
-        FailureTrace trace = new FailureTrace();
-        if (!Config.isLlmConfigured()) {
-            String error = "模型 API 未配置，请在 config.yml 的 llm.apiKey 中填写密钥后重载插件。";
-            saveFailedExchange(sessionId, turnId, request, error, 0, trace);
-            throw new CliException(error);
-        }
-        LLMService.ToolChatResult r;
-        try {
-            r = Config.llm.completeWithTools(
-                    PluginConfigTool.buildSystemPrompt(cwd),
-                    history,
-                    request,
-                    PluginConfigTool.toolSchemas(),
-                    toolExecutor(cwd, sessionId, turnId, trace),
-                    0.2,
-                    1000,
-                    10);
-        } catch (Exception e) {
-            String error = exceptionMessage(e);
-            saveFailedExchange(sessionId, turnId, request, error, 0, trace);
-            throw new CliException("AI 调用失败: " + error);
-        }
-        if (!r.isOk()) {
-            saveFailedExchange(sessionId, turnId, request, r.getError(), r.getIterations(), trace);
-            throw new CliException("AI 调用失败: " + r.getError());
-        }
-        WebAiSessionStore.appendExchange(sessionId, turnId, request, r.getContent());
-        return r.getContent();
+        return runTask(cwd, request, sessionId, null, new ArrayList<>());
     }
 
-    private static String doAiStream(final String cwd, String request, String sessionId, final StreamSink sink, final List<String> confirmationIds) {
-        if (request.trim().isEmpty()) {
-            throw new CliException("请输入自然语言需求，例如：帮我找一下远征插件的配置文件有哪些");
-        }
-        JsonArray history = WebAiSessionStore.history(sessionId);
-        final long turnId = WebAiSessionStore.beginTurn(sessionId);
-        final FailureTrace trace = new FailureTrace();
-        if (!Config.isLlmConfigured()) {
-            String error = "模型 API 未配置，请在 config.yml 的 llm.apiKey 中填写密钥后重载插件。";
-            saveFailedExchange(sessionId, turnId, request, error, 0, trace);
-            throw new CliException(error);
-        }
-        LLMService.ToolChatResult r;
-        try {
-            r = Config.llm.completeWithToolsStreaming(
-                    PluginConfigTool.buildSystemPrompt(cwd),
-                    history,
-                    request,
-                    PluginConfigTool.toolSchemas(),
-                    toolExecutor(cwd, sessionId, turnId, trace),
-                    new LLMService.ToolStreamListener() {
-                        @Override
-                        public void onContentDelta(String text) throws IOException {
-                            trace.appendContent(text);
-                            sink.delta(text);
-                        }
+    private static String doAiStream(String cwd, String request, String sessionId,
+                                     StreamSink sink, List<String> confirmationIds) {
+        return runTask(cwd, request, sessionId, sink, confirmationIds);
+    }
 
-                        @Override
-                        public void onStatus(String message) throws IOException {
-                            trace.appendStatus(message);
-                            sink.status(message);
-                        }
-
-                        @Override
-                        public void onToolCallStarted(String name) throws IOException {
-                            String status = "正在调用工具: " + name;
-                            trace.appendStatus(status);
-                            sink.status(status);
-                        }
-
-                        @Override
-                        public void onToolCallFinished(String name, JsonObject result) throws IOException {
-                            if (result != null && result.has("confirmation_id") && !result.get("confirmation_id").isJsonNull()) {
-                                confirmationIds.add(result.get("confirmation_id").getAsString());
-                                sink.status("已生成修改预览: " + result.get("confirmation_id").getAsString());
-                            } else {
-                                sink.status("工具完成: " + name);
-                            }
-                        }
-                    },
-                    0.2,
-                    1000,
-                    10);
-        } catch (Exception e) {
-            String error = exceptionMessage(e);
-            saveFailedExchange(sessionId, turnId, request, error, 0, trace);
-            throw new CliException("AI 调用失败: " + error);
+    private static String runTask(String cwd, String request, String sessionId,
+                                  StreamSink sink, List<String> confirmationIds) {
+        if (request.trim().isEmpty()) throw new CliException("请输入自然语言需求");
+        boolean resume = "/continue".equalsIgnoreCase(request.trim()) || "继续".equals(request.trim());
+        ToolConversation state = WebAiSessionStore.execution(sessionId);
+        if (resume && !state.canContinue()) throw new CliException("当前没有可以继续的暂停任务");
+        if (!resume && request.length() > Config.webAiContextMaxChars - 256)
+            throw new CliException("输入超过上下文预算，请缩小请求或提高 webui.ai.contextMaxChars");
+        if (!Config.isLlmConfigured()) throw new CliException("模型 API 未配置，请设置 llm.apiKey 后重载插件。");
+        // Flush any previous unsaved state before advancing or replacing the task.
+        WebAiSessionStore.checkpoint(sessionId);
+        long turnId = WebAiSessionStore.beginTurn(sessionId);
+        state.turnId = turnId;
+        if (!resume) {
+            state.pendingInput = "";
+            LLMService.closePendingCalls(state);
+            if (state.canContinue()) {
+                PluginConfigTool.cancelSessionPending(sessionId);
+                state.addText("user", "[任务状态] 用户已提出新需求，旧暂停任务结束，旧的待确认修改已取消。");
+            }
+            state.taskId = java.util.UUID.randomUUID().toString();
+            state.cwd = cwd;
+            state.iterations = 0;
+            state.totalIterations = 0;
+            state.addText("user", request);
+        } else {
+            state.pendingInput = "继续上次任务。历史配置仅是快照，提出修改前须重新核实当前值。\n"
+                    + PluginConfigTool.confirmationState(sessionId, state);
         }
-        if (!r.isOk()) {
-            saveFailedExchange(sessionId, turnId, request, r.getError(), r.getIterations(), trace);
-            throw new CliException("AI 调用失败: " + r.getError());
+        state.status = "RUNNING";
+        state.reason = "";
+        WebAiSessionStore.appendExchange(sessionId, turnId, request, "任务执行中，进度将逐步保存。");
+        FailureTrace trace = new FailureTrace();
+        LLMService.ToolStreamListener listener = sink == null ? null : new LLMService.ToolStreamListener() {
+            public void onContentDelta(String text) throws IOException { trace.appendContent(text); sink.delta(text); }
+            public void onStatus(String text) throws IOException { trace.appendStatus(text); sink.status(text); }
+            public void onToolCallStarted(String name) throws IOException { sink.status("正在调用工具: " + name); }
+            public void onToolCallFinished(String name, JsonObject result) throws IOException {
+                sink.status("工具完成: " + name);
+                if (result.has("confirmation_id") && !result.get("confirmation_id").isJsonNull()) {
+                    String id = result.get("confirmation_id").getAsString();
+                    confirmationIds.add(id);
+                    sink.status("已生成修改预览: " + id);
+                }
+            }
+        };
+        LLMService.ToolChatResult result = Config.llm.runWithTools(
+                PluginConfigTool.buildSystemPrompt(state.cwd), state, PluginConfigTool.toolSchemas(),
+                toolExecutor(state.cwd, sessionId, turnId, trace), listener, 0.2, 1000,
+                Config.webAiMaxIterations, Config.webAiContextMaxChars, Config.webAiRecentMessageGroups,
+                Config.webAiSummaryMaxChars, () -> WebAiSessionStore.checkpoint(sessionId));
+        if (!result.isOk()) {
+            saveFailedExchange(sessionId, turnId, request, result.getError(), result.getIterations(), trace);
+            throw new CliException("AI 调用失败: " + result.getError() + "；可在修复后输入 /continue 继续。");
         }
-        WebAiSessionStore.appendExchange(sessionId, turnId, request, r.getContent());
-        return r.getContent();
+        String output = result.getContent();
+        String display = "PAUSED".equals(result.getStatus()) && !trace.snapshot().isEmpty()
+                ? trace.snapshot() + "\n\n" + output : output;
+        WebAiSessionStore.appendExchange(sessionId, turnId, request, display);
+        if (sink != null && "PAUSED".equals(result.getStatus())) {
+            try { sink.delta("\n\n" + output); } catch (IOException e) { throw new CliException(e.getMessage()); }
+        }
+        return output;
     }
 
     private static LLMService.ToolExecutor toolExecutor(final String cwd, final String sessionId,
                                                         final long turnId, final FailureTrace trace) {
         final ToolContext context = new ToolContext(cwd, sessionId, turnId);
         return new LLMService.ToolExecutor() {
+            @Override
+            public JsonObject recover(String name, JsonObject arguments) {
+                return "propose_yaml_set".equals(name) ? PluginConfigTool.recoverPreview(context, arguments) : null;
+            }
             @Override
             public JsonObject execute(String name, JsonObject arguments) {
                 trace.appendStatus("正在调用工具: " + name);
@@ -333,8 +331,7 @@ public final class WebCli {
 
     private static void saveFailedExchange(String sessionId, long turnId, String request,
                                            String error, int iterations, FailureTrace trace) {
-        String reason = clipText(error == null || error.trim().isEmpty() ? "未知错误" : error.trim(),
-                MAX_FAILURE_REASON_CHARS);
+        String reason = error == null || error.trim().isEmpty() ? "未知错误" : error.trim();
         StringBuilder assistant = new StringBuilder();
         assistant.append("**本轮执行失败**\n\n");
         assistant.append("错误：").append(reason);
@@ -355,16 +352,8 @@ public final class WebCli {
                 : message.trim();
     }
 
-    private static String clipText(String value, int maxChars) {
-        if (value == null) {
-            return "";
-        }
-        return value.length() <= maxChars ? value : value.substring(0, maxChars) + "...";
-    }
-
     private static final class FailureTrace {
         private final StringBuilder process = new StringBuilder();
-        private boolean truncated;
         private String lastStatus;
 
         synchronized void appendContent(String text) {
@@ -409,25 +398,11 @@ public final class WebCli {
         }
 
         synchronized String snapshot() {
-            String value = process.toString().trim();
-            return truncated ? value + "\n[后续执行过程过长，已截断]" : value;
+            return process.toString().trim();
         }
 
         private void append(String text) {
-            if (text == null || text.isEmpty() || truncated) {
-                return;
-            }
-            int remaining = MAX_FAILED_PROCESS_CHARS - process.length();
-            if (remaining <= 0) {
-                truncated = true;
-                return;
-            }
-            if (text.length() <= remaining) {
-                process.append(text);
-            } else {
-                process.append(text, 0, remaining);
-                truncated = true;
-            }
+            if (text != null) process.append(text);
         }
     }
 
@@ -444,6 +419,7 @@ public final class WebCli {
     private static String help() {
         return "直接输入自然语言即可与配置助手对话。控制指令统一使用 / 前缀：\n"
                 + "  /help                 显示本帮助\n"
+                + "  /continue             继续最近的暂停任务（也可单独输入：继续）\n"
                 + "  /history              查看可撤回轮次\n"
                 + "  /reset                清空对话记忆\n"
                 + "  /confirm <id>         确认配置修改预览\n"

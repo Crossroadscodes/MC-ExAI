@@ -29,8 +29,14 @@ public interface DataStorage {
 
     boolean isPendingKnowledgeDuplicate(String question);
 
+    default void insertLog(String playerName, String playerInput, String aiResponse,
+                           String documentId, String source, RagStatus ragStatus, String rawContext) {
+        insertLog(playerName, playerInput, aiResponse, documentId, source, ragStatus, rawContext, "");
+    }
+
     void insertLog(String playerName, String playerInput, String aiResponse,
-                   String documentId, String source, RagStatus ragStatus);
+                   String documentId, String source, RagStatus ragStatus, String rawContext,
+                   String retrievalQuestion);
 
     int getLogTotalCount();
 

@@ -89,11 +89,17 @@ public class MysqlStorage implements DataStorage {
                     "timestamp BIGINT NOT NULL, " +
                     "source VARCHAR(32) DEFAULT 'player', " +
                     "thanked TINYINT(1) DEFAULT 0, " +
+                    "context_summary TEXT, " +
+                    "raw_context TEXT, " +
                     "create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                     ")");
             // 兼容旧版本：为已存在的表补充新列
             addColumnIfMissing(connection, "exai_pending_knowledge", "source", "VARCHAR(32) DEFAULT 'player'");
             addColumnIfMissing(connection, "exai_pending_knowledge", "thanked", "TINYINT(1) DEFAULT 0");
+            addColumnIfMissing(connection, "exai_pending_knowledge", "context_summary", "TEXT NULL");
+            addColumnIfMissing(connection, "exai_pending_knowledge", "raw_context", "TEXT NULL");
+            addColumnIfMissing(connection, "exai_log", "raw_context", "TEXT NULL");
+            addColumnIfMissing(connection, "exai_log", "retrieval_question", "TEXT NULL");
             System.out.println(Lang.get("log.pending-knowledge-table-ok"));
 
             statement.executeUpdate("CREATE TABLE IF NOT EXISTS exai_pending_reward (" +
@@ -343,7 +349,7 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public int insertPendingKnowledge(KnowledgeEntry entry) {
-        String insertSQL = "INSERT INTO exai_pending_knowledge (question, answer, submitter, timestamp, source, thanked) VALUES (?, ?, ?, ?, ?, ?)";
+        String insertSQL = "INSERT INTO exai_pending_knowledge (question, answer, submitter, timestamp, source, thanked, context_summary, raw_context) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(insertSQL, Statement.RETURN_GENERATED_KEYS)) {
             pstmt.setString(1, entry.getQuestion());
@@ -352,6 +358,8 @@ public class MysqlStorage implements DataStorage {
             pstmt.setLong(4, entry.getTimestamp());
             pstmt.setString(5, entry.getSource());
             pstmt.setBoolean(6, entry.isThanked());
+            pstmt.setString(7, entry.getContextSummary());
+            pstmt.setString(8, entry.getRawContext());
             pstmt.executeUpdate();
             ResultSet rs = pstmt.getGeneratedKeys();
             if (rs.next()) {
@@ -380,7 +388,7 @@ public class MysqlStorage implements DataStorage {
     @Override
     public void loadAllPendingKnowledge() {
         KnowledgeQueue.clearAll();
-        String querySQL = "SELECT id, question, answer, submitter, timestamp, source, thanked FROM exai_pending_knowledge";
+        String querySQL = "SELECT id, question, answer, submitter, timestamp, source, thanked, context_summary, raw_context FROM exai_pending_knowledge";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL);
              ResultSet rs = pstmt.executeQuery()) {
@@ -394,6 +402,8 @@ public class MysqlStorage implements DataStorage {
                 String source = rs.getString("source");
                 entry.setSource(source == null ? "player" : source);
                 entry.setThanked(rs.getBoolean("thanked"));
+                entry.setContextSummary(rs.getString("context_summary"));
+                entry.setRawContext(rs.getString("raw_context"));
                 KnowledgeQueue.addWithId(entry, id);
             }
             System.out.println(Lang.get("log.loaded-pending", KnowledgeQueue.getTotalCount()));
@@ -445,9 +455,10 @@ public class MysqlStorage implements DataStorage {
 
     @Override
     public void insertLog(String playerName, String playerInput, String aiResponse,
-                          String documentId, String source, RagStatus ragStatus) {
-        String insertSQL = "INSERT INTO exai_log (player_name, player_input, ai_response, document_id, source, rag_status) " +
-                "VALUES (?, ?, ?, ?, ?, ?)";
+                          String documentId, String source, RagStatus ragStatus, String rawContext,
+                          String retrievalQuestion) {
+        String insertSQL = "INSERT INTO exai_log (player_name, player_input, ai_response, document_id, source, rag_status, raw_context, retrieval_question) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(insertSQL)) {
             pstmt.setString(1, playerName);
@@ -456,6 +467,8 @@ public class MysqlStorage implements DataStorage {
             pstmt.setString(4, documentId);
             pstmt.setString(5, source);
             pstmt.setString(6, (ragStatus == null ? RagStatus.UNKNOWN : ragStatus).name());
+            pstmt.setString(7, rawContext == null ? "" : rawContext);
+            pstmt.setString(8, retrievalQuestion == null ? "" : retrievalQuestion);
             pstmt.executeUpdate();
         } catch (SQLException e) {
             System.err.println("Failed to insert AI log: " + e.getMessage());
@@ -482,7 +495,7 @@ public class MysqlStorage implements DataStorage {
     @Override
     public List<LogEntry> getLogPage(int page, int pageSize) {
         List<LogEntry> list = new ArrayList<>();
-        String querySQL = "SELECT id, player_name, player_input, ai_response, document_id, source, rag_status, create_time " +
+        String querySQL = "SELECT id, player_name, player_input, ai_response, document_id, source, rag_status, create_time, raw_context, retrieval_question " +
                 "FROM exai_log ORDER BY id DESC LIMIT ? OFFSET ?";
         try (Connection connection = sql.getConnection();
              PreparedStatement pstmt = connection.prepareStatement(querySQL)) {
@@ -498,8 +511,11 @@ public class MysqlStorage implements DataStorage {
                             rs.getString("document_id"),
                             rs.getString("source"),
                             RagStatus.fromString(rs.getString("rag_status")),
-                            rs.getTimestamp("create_time") == null ? "" : rs.getTimestamp("create_time").toString()
+                            rs.getTimestamp("create_time") == null ? "" : rs.getTimestamp("create_time").toString(),
+                            rs.getString("raw_context")
                     );
+                    String retrievalQuestion = rs.getString("retrieval_question");
+                    entry.setRetrievalQuestion(retrievalQuestion == null ? "" : retrievalQuestion);
                     list.add(entry);
                 }
             }

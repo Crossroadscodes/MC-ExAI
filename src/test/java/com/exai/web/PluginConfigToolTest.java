@@ -19,9 +19,9 @@ public class PluginConfigToolTest {
         List<String> names = PluginConfigTool.toolNames();
         assertEquals(Arrays.asList("list_plugin_yaml", "list_yaml_keys", "get_yaml_value",
                 "search_yaml_keys", "list_plugins", "search_plugins", "get_plugin_metadata",
-                "find_plugin_files", "search_yaml_values", "read_yaml_snippet", "propose_yaml_set"), names);
+                "find_plugin_files", "search_yaml_values", "read_yaml_snippet", "read_yaml_lines", "propose_yaml_set"), names);
         JsonArray schemas = PluginConfigTool.toolSchemas();
-        assertEquals(11, schemas.size());
+        assertEquals(12, schemas.size());
         assertEquals(names.size(), new HashSet<>(names).size());
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
@@ -48,7 +48,7 @@ public class PluginConfigToolTest {
         PluginConfigTool.toolSchemas().get(10).getAsJsonObject().remove("function");
         PluginConfigTool.toolNames().clear();
         assertEquals(expected, PluginConfigTool.toolSchema("propose_yaml_set"));
-        assertEquals(11, PluginConfigTool.toolNames().size());
+        assertEquals(12, PluginConfigTool.toolNames().size());
     }
 
     @Test

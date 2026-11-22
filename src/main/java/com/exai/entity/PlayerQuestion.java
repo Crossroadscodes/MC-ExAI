@@ -10,6 +10,7 @@ public class PlayerQuestion {
     private String question;
     private String playerId;
     private String context;
+    private String chatContext;
     private Date timestamp;
     public PlayerQuestion(String question){
         this.question = question;

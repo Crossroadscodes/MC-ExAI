@@ -155,6 +155,8 @@ public class YamlStorage implements DataStorage {
             pendingConf.set(base + ".timestamp", entry.getTimestamp());
             pendingConf.set(base + ".source", entry.getSource());
             pendingConf.set(base + ".thanked", entry.isThanked());
+            pendingConf.set(base + ".contextSummary", entry.getContextSummary());
+            pendingConf.set(base + ".rawContext", entry.getRawContext());
             pendingConf.set("next-id", id + 1);
             saveQuietly(pendingConf, pendingFile);
             return id;
@@ -192,6 +194,8 @@ public class YamlStorage implements DataStorage {
                     KnowledgeEntry entry = new KnowledgeEntry(question, answer, submitter, timestamp);
                     entry.setSource(pendingConf.getString(base + ".source", "player"));
                     entry.setThanked(pendingConf.getBoolean(base + ".thanked", false));
+                    entry.setContextSummary(pendingConf.getString(base + ".contextSummary", ""));
+                    entry.setRawContext(pendingConf.getString(base + ".rawContext", ""));
                     KnowledgeQueue.addWithId(entry, id);
                 }
             }
@@ -238,12 +242,15 @@ public class YamlStorage implements DataStorage {
 
     @Override
     public void insertLog(String playerName, String playerInput, String aiResponse,
-                          String documentId, String source, RagStatus ragStatus) {
+                          String documentId, String source, RagStatus ragStatus, String rawContext,
+                          String retrievalQuestion) {
         synchronized (logLock) {
             int id = logConf.getInt("next-id", 1);
             String base = "entries." + id;
             logConf.set(base + ".player-name", playerName);
             logConf.set(base + ".player-input", playerInput);
+            logConf.set(base + ".retrieval-question", retrievalQuestion == null ? "" : retrievalQuestion);
+            logConf.set(base + ".raw-context", rawContext == null ? "" : rawContext);
             logConf.set(base + ".ai-response", aiResponse);
             logConf.set(base + ".document-id", documentId == null ? "" : documentId);
             logConf.set(base + ".source", source == null ? "" : source);
@@ -295,8 +302,10 @@ public class YamlStorage implements DataStorage {
                         logConf.getString(base + ".document-id", ""),
                         logConf.getString(base + ".source", ""),
                         RagStatus.fromString(logConf.getString(base + ".rag-status", "UNKNOWN")),
-                        logConf.getString(base + ".create-time", "")
+                        logConf.getString(base + ".create-time", ""),
+                        logConf.getString(base + ".raw-context", "")
                 );
+                entry.setRetrievalQuestion(logConf.getString(base + ".retrieval-question", ""));
                 result.add(entry);
             }
         }

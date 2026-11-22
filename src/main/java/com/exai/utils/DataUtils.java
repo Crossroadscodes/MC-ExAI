@@ -78,8 +78,20 @@ public class DataUtils {
 
     public static void insertLog(String playerName, String playerInput, String aiResponse,
                                  String documentId, String source, RagStatus ragStatus) {
+        insertLog(playerName, playerInput, aiResponse, documentId, source, ragStatus, "");
+    }
+
+    public static void insertLog(String playerName, String playerInput, String aiResponse,
+                                 String documentId, String source, RagStatus ragStatus, String rawContext) {
+        insertLog(playerName, playerInput, aiResponse, documentId, source, ragStatus, rawContext, "");
+    }
+
+    public static void insertLog(String playerName, String playerInput, String aiResponse,
+                                 String documentId, String source, RagStatus ragStatus, String rawContext,
+                                 String retrievalQuestion) {
         if (DataContainer.storage != null) {
-            DataContainer.storage.insertLog(playerName, playerInput, aiResponse, documentId, source, ragStatus);
+            DataContainer.storage.insertLog(playerName, playerInput, aiResponse, documentId, source, ragStatus,
+                    rawContext, retrievalQuestion);
         }
     }
 
@@ -87,6 +99,12 @@ public class DataUtils {
                                       String documentId, String source, RagStatus ragStatus) {
         Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(),
                 () -> insertLog(playerName, playerInput, aiResponse, documentId, source, ragStatus));
+    }
+
+    public static void insertLogAsync(String playerName, String playerInput, String aiResponse,
+                                      String documentId, String source, RagStatus ragStatus, String rawContext) {
+        Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(),
+                () -> insertLog(playerName, playerInput, aiResponse, documentId, source, ragStatus, rawContext));
     }
 
     public static int getLogTotalCount() {

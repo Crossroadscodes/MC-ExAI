@@ -74,7 +74,7 @@ public class WebServerToolApiTest {
         assertEquals(PluginConfigTool.toolSchemas(), result.getAsJsonArray("tools"));
         assertEquals(PluginConfigTool.toolNames().size(), result.getAsJsonArray("tools").size());
         result.getAsJsonArray("tools").remove(0);
-        assertEquals(11, assertResponse(call(0, "GET", ""), 200).getAsJsonArray("tools").size());
+        assertEquals(12, assertResponse(call(0, "GET", ""), 200).getAsJsonArray("tools").size());
     }
 
     @Test

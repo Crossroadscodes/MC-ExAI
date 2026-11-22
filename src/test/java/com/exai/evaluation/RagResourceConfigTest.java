@@ -16,6 +16,7 @@ public class RagResourceConfigTest {
                     new File("src/main/resources/lang/" + locale + ".yml"));
             assertNotNull(yaml.getString("prompt.knowledge-id"));
             assertNotNull(yaml.getString("prompt.rag-judge"));
+            assertNotNull(yaml.getString("prompt.answerability-check"));
             assertNotNull(yaml.getString("book.rag-test-title"));
             assertNotNull(yaml.getString("gui.rag-annotation-title"));
             assertNotNull(yaml.getString("gui.rag-annotation-input-question"));
@@ -36,5 +37,15 @@ public class RagResourceConfigTest {
                 new File("src/main/resources/config.yml"));
         assertEquals(4, yaml.getInt("evaluation.judge.passScore"));
         assertEquals(20, yaml.getInt("evaluation.resultRetention"));
+    }
+
+    @Test
+    public void defaultHybridRetrievalConfigIsPresent() {
+        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(
+                new File("src/main/resources/config.yml"));
+        assertEquals(0.5, yaml.getDouble("knowledge.hybrid.embeddingWeight"), 0.000001);
+        assertEquals(0.5, yaml.getDouble("knowledge.hybrid.bm25Weight"), 0.000001);
+        assertEquals(60, yaml.getInt("knowledge.hybrid.rrfK"));
+        assertEquals(10, yaml.getInt("knowledge.hybrid.candidatePoolSize"));
     }
 }

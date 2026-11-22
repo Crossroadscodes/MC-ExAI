@@ -99,9 +99,19 @@ public class ConversationHistoryGUI {
         lore.add(Lang.get("gui.history-time", entry.getCreateTime()));
         lore.add(Lang.get("gui.history-source", entry.getSource() == null ? "" : entry.getSource()));
         lore.add(Lang.get("gui.history-rag-status", entry.getRagStatus().name()));
+        if (entry.getRawContext() != null && !entry.getRawContext().trim().isEmpty()) {
+            lore.add("§7原始上下文：");
+            String[] contextLines = entry.getRawContext().split("\\n");
+            for (int i = Math.max(0, contextLines.length - 3); i < contextLines.length; i++) {
+                lore.add("§8" + truncate(contextLines[i], 32));
+            }
+        }
         lore.add(annotated ? Lang.get("gui.history-test-marked") : Lang.get("gui.history-test-unmarked"));
         lore.add("");
         lore.add(Lang.get("gui.knowledge-question", truncate(entry.getPlayerInput(), 30)));
+        if (entry.getRetrievalQuestion() != null && !entry.getRetrievalQuestion().isEmpty()) {
+            lore.add(Lang.get("gui.history-retrieval-question", truncate(entry.getRetrievalQuestion(), 30)));
+        }
         lore.add(Lang.get("gui.knowledge-answer", truncate(entry.getAiResponse(), 30)));
         lore.add("");
         lore.add(Lang.get("gui.history-left-click"));
@@ -180,6 +190,9 @@ public class ConversationHistoryGUI {
                 player.sendMessage(Lang.get("gui.divider"));
                 player.sendMessage(Lang.get("gui.history-detail-player", entry.getPlayerName(), entry.getCreateTime()));
                 player.sendMessage(Lang.get("gui.knowledge-question", entry.getPlayerInput()));
+                if (entry.getRetrievalQuestion() != null && !entry.getRetrievalQuestion().isEmpty()) {
+                    player.sendMessage(Lang.get("gui.history-retrieval-question", entry.getRetrievalQuestion()));
+                }
                 player.sendMessage(Lang.get("gui.knowledge-answer", entry.getAiResponse()));
                 player.sendMessage(Lang.get("gui.divider"));
             } else {

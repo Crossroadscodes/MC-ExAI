@@ -14,9 +14,16 @@ public class LogEntry {
     private String source;
     private RagStatus ragStatus;
     private String createTime;
+    private String rawContext;
+    private String retrievalQuestion = "";
 
     public LogEntry(int id, String playerName, String playerInput, String aiResponse,
                     String documentId, String source, RagStatus ragStatus, String createTime) {
+        this(id, playerName, playerInput, aiResponse, documentId, source, ragStatus, createTime, "");
+    }
+
+    public LogEntry(int id, String playerName, String playerInput, String aiResponse,
+                    String documentId, String source, RagStatus ragStatus, String createTime, String rawContext) {
         this.id = id;
         this.playerName = playerName;
         this.playerInput = playerInput;
@@ -25,5 +32,6 @@ public class LogEntry {
         this.source = source;
         this.ragStatus = ragStatus == null ? RagStatus.UNKNOWN : ragStatus;
         this.createTime = createTime;
+        this.rawContext = rawContext == null ? "" : rawContext;
     }
 }

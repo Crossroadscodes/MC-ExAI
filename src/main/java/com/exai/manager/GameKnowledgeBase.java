@@ -6,9 +6,12 @@ import com.exai.embedding.VectorStore;
 import com.exai.entity.GameDocument;
 import com.exai.entity.RetrievedDocument;
 import com.exai.i18n.Lang;
+import com.exai.retrieval.Bm25Index;
+import com.exai.retrieval.HybridRanker;
 import org.bukkit.Bukkit;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -19,14 +22,31 @@ public class GameKnowledgeBase {
     private GameDataLoader dataLoader;
     private double minSimilarity;
     private int maxDocs;
+    private double embeddingWeight;
+    private double bm25Weight;
+    private int rrfK;
+    private int candidatePoolSize;
+    private volatile Bm25Index bm25Index = new Bm25Index(new ArrayList<GameDocument>());
     private volatile boolean ready;
 
     public GameKnowledgeBase(VectorStore vectorStore, DashScopeEmbedding embeddingService, GameDataLoader dataLoader, double minSimilarity, int maxDocs) {
+        this(vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs,
+                0.5, 0.5, 60, 10);
+    }
+
+    public GameKnowledgeBase(VectorStore vectorStore, DashScopeEmbedding embeddingService,
+                             GameDataLoader dataLoader, double minSimilarity, int maxDocs,
+                             double embeddingWeight, double bm25Weight, int rrfK,
+                             int candidatePoolSize) {
         this.vectorStore = vectorStore;
         this.embeddingService = embeddingService;
         this.dataLoader = dataLoader;
         this.minSimilarity = minSimilarity;
         this.maxDocs = maxDocs;
+        this.embeddingWeight = embeddingWeight;
+        this.bm25Weight = bm25Weight;
+        this.rrfK = rrfK;
+        this.candidatePoolSize = Math.max(maxDocs, candidatePoolSize);
     }
 
     public void initializeKnowledgeBase() {
@@ -44,6 +64,7 @@ public class GameKnowledgeBase {
                 vectorStore.addDocument(doc);
                 contents.add(doc.getContent());
             });
+            bm25Index = new Bm25Index(documents);
             // 把本次活跃文档的嵌入落盘，下次启动/重载只需为新增或变更的片段调用接口
             embeddingService.persistCache(contents);
             ready = true;
@@ -64,16 +85,17 @@ public class GameKnowledgeBase {
     }
 
     public List<RetrievedDocument> retrieveRelevantWithScores(String query, String playerContext) {
+        if (!ready) return Collections.emptyList();
         String enhancedQuery = enhanceQueryWithContext(query, playerContext);
         double[] queryEmbedding = embeddingService.generateEmbedding(enhancedQuery);
 
         String predictedCategory = predictCategory(query);
         List<GameDocument> results = vectorStore.searchByCategory(
-                predictedCategory, queryEmbedding, 5
+                predictedCategory, queryEmbedding, Math.min(5, candidatePoolSize)
         );
 
         if (results.size() < 3) {
-            List<GameDocument> globalResults = vectorStore.searchSimilar(queryEmbedding, 10);
+            List<GameDocument> globalResults = vectorStore.searchSimilar(queryEmbedding, candidatePoolSize);
             results.addAll(globalResults);
         }
 
@@ -82,15 +104,24 @@ public class GameKnowledgeBase {
                 .filter(doc -> embeddingService.cosineSimilarity(queryEmbedding, doc.getEmbedding()) >= minSimilarity)
                 .sorted(Comparator.comparingDouble(doc ->
                         -embeddingService.cosineSimilarity(queryEmbedding, doc.getEmbedding())))
-                .limit(maxDocs)
+                .limit(candidatePoolSize)
                 .collect(Collectors.toList());
-        List<RetrievedDocument> scored = new ArrayList<>();
-        for (int i = 0; i < filtered.size(); i++) {
-            GameDocument doc = filtered.get(i);
-            scored.add(new RetrievedDocument(doc,
-                    embeddingService.cosineSimilarity(queryEmbedding, doc.getEmbedding()), i + 1));
+
+        List<HybridRanker.ScoredDocument> embeddingResults = new ArrayList<>();
+        for (GameDocument doc : filtered) {
+            embeddingResults.add(new HybridRanker.ScoredDocument(doc,
+                    embeddingService.cosineSimilarity(queryEmbedding, doc.getEmbedding())));
         }
-        return scored;
+        String lexicalQuery = query == null ? "" : query;
+        if (playerContext != null && !playerContext.trim().isEmpty()) {
+            lexicalQuery += "\n" + playerContext.trim();
+        }
+        List<HybridRanker.ScoredDocument> bm25Results = new ArrayList<>();
+        for (Bm25Index.SearchResult result : bm25Index.search(lexicalQuery, candidatePoolSize)) {
+            bm25Results.add(new HybridRanker.ScoredDocument(result.getDocument(), result.getScore()));
+        }
+        return HybridRanker.fuse(embeddingResults, bm25Results, embeddingWeight,
+                bm25Weight, rrfK, maxDocs);
     }
 
     private String enhanceQueryWithContext(String query, String context) {

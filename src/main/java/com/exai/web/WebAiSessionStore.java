@@ -1,6 +1,11 @@
 package com.exai.web;
 
 import com.exai.ExAI;
+import com.exai.service.ToolConversation;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -8,7 +13,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.io.File;
-import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Iterator;
@@ -21,10 +25,9 @@ import java.util.Comparator;
 import java.util.UUID;
 import java.util.LinkedHashMap;
 
-/** Web CLI AI 的轻量会话记忆，只保存 user/assistant 最终文本，不保存 tool 调用大段上下文。 */
+/** Separate display transcripts and durable tool execution ledgers, stored per session. */
 public final class WebAiSessionStore {
     private static final int MAX_CONTEXT_MESSAGES = 16; // 8 rounds injected into the LLM
-    private static final int MAX_MESSAGE_CHARS = 4000;
     private static final int MAX_TOTAL_CHARS = 14000;
     /** 最后一轮对话距今超过 30 天的会话会被清理。 */
     private static final long CONVERSATION_RETENTION_MS = 30L * 24L * 60L * 60L * 1000L;
@@ -34,15 +37,94 @@ public final class WebAiSessionStore {
     private static final Gson GSON = new Gson();
     private static final LinkedHashMap<String, Session> SESSIONS = new LinkedHashMap<>();
     private static boolean loaded;
+    private static File rootOverride;
+    private static final Map<String, Thread> BUSY = new LinkedHashMap<>();
+    private static final Map<String, Integer> LOCK_DEPTH = new LinkedHashMap<>();
+    private static final Set<String> BROKEN = new HashSet<>();
+
+    static synchronized void useDirectory(File root) {
+        rootOverride = root;
+        loaded = false;
+        SESSIONS.clear();
+        BUSY.clear();
+        LOCK_DEPTH.clear();
+        BROKEN.clear();
+    }
+
+    public static synchronized boolean acquire(String id) {
+        ensure(id);
+        if (BUSY.containsKey(id)) return false;
+        BUSY.put(id, Thread.currentThread());
+        LOCK_DEPTH.put(id, 1);
+        return true;
+    }
+
+    public static synchronized boolean isBusy(String id) { return BUSY.containsKey(id); }
+    public static synchronized boolean busyElsewhere(String id) {
+        return BUSY.containsKey(id) && BUSY.get(id) != Thread.currentThread();
+    }
+    public static synchronized boolean acquireControl(String id) {
+        if (id == null || id.isEmpty()) return true;
+        if (busyElsewhere(id)) return false;
+        if (!BUSY.containsKey(id)) return acquire(id);
+        LOCK_DEPTH.put(id, LOCK_DEPTH.get(id) + 1);
+        return true;
+    }
+
+    public static synchronized void release(String id) {
+        if (BUSY.get(id) != Thread.currentThread()) return;
+        int depth = LOCK_DEPTH.get(id) - 1;
+        if (depth > 0) LOCK_DEPTH.put(id, depth);
+        else { BUSY.remove(id); LOCK_DEPTH.remove(id); }
+    }
+
+    public static synchronized void interrupted(String id, Exception error) {
+        ToolConversation task = execution(id);
+        if (!"RUNNING".equals(task.status)) return;
+        task.status = "FAILED";
+        task.reason = error.getMessage();
+        restorePendingDisplay(SESSIONS.get(id));
+        try { save(id); } catch (RuntimeException ignored) { /* Keep dirty state for explicit retry. */ }
+    }
+
+    public static synchronized ToolConversation execution(String id) {
+        return SESSIONS.get(ensure(id)).execution;
+    }
+
+    public static synchronized void checkpoint(String id) {
+        Session session = SESSIONS.get(id);
+        if (session == null) throw new IllegalStateException("会话不存在");
+        session.touch();
+        session.lastConversation = System.currentTimeMillis();
+        save(id);
+    }
+
+    public static synchronized Map<String, Object> taskMeta(String id) {
+        ToolConversation task = execution(id);
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("taskId", task.taskId);
+        meta.put("taskStatus", task.status);
+        meta.put("canContinue", task.canContinue());
+        meta.put("iterations", task.iterations);
+        meta.put("totalIterations", task.totalIterations);
+        return meta;
+    }
+
+    public static synchronized void recordEvent(String id, String event) {
+        if (id == null || id.isEmpty()) return;
+        ToolConversation task = execution(id);
+        com.exai.service.LLMService.closePendingCalls(task);
+        task.addText("user", "[配置操作结果] " + event);
+        checkpoint(id);
+    }
 
     private WebAiSessionStore() {}
 
     public static synchronized String ensure(String requestedId) {
         loadIfNeeded();
-        if (cleanup()) {
-            save();
-        }
+        cleanup();
         String id = validId(requestedId) ? requestedId : newId();
+        if (BROKEN.contains(id)) throw new IllegalStateException("会话文件及备份损坏，无法恢复: " + id);
         Session s = SESSIONS.get(id);
         if (s == null) {
             s = new Session();
@@ -90,11 +172,16 @@ public final class WebAiSessionStore {
     public static synchronized void appendExchange(String id, long turnId, String user, String assistant) {
         String sid = ensure(id);
         Session s = SESSIONS.get(sid);
-        s.messages.add(new Msg("user", clip(user), turnId));
-        s.messages.add(new Msg("assistant", clip(assistant), turnId));
+        int count = s.messages.size();
+        if (count >= 2 && s.messages.get(count - 1).turnId == turnId) {
+            s.messages.set(count - 1, new Msg("assistant", clip(assistant), turnId));
+        } else {
+            s.messages.add(new Msg("user", clip(user), turnId));
+            s.messages.add(new Msg("assistant", clip(assistant), turnId));
+        }
         s.touch();
         s.lastConversation = System.currentTimeMillis();
-        save();
+        save(sid);
     }
 
     public static synchronized void reset(String id) {
@@ -102,9 +189,11 @@ public final class WebAiSessionStore {
         Session s = SESSIONS.get(sid);
         if (s != null) {
             s.messages.clear();
+            s.execution = new ToolConversation();
             s.lastConversation = 0L;
             s.touch();
-            save();
+            save(sid);
+            save(sid); // A recovery backup must not resurrect cleared messages.
         }
     }
 
@@ -117,7 +206,7 @@ public final class WebAiSessionStore {
     /** Lists persisted conversations for the Web CLI sidebar. */
     public static synchronized List<Map<String, Object>> listSessions() {
         loadIfNeeded();
-        if (cleanup()) save();
+        cleanup();
         List<SessionSummary> summaries = new ArrayList<>();
         for (Map.Entry<String, Session> entry : SESSIONS.entrySet()) {
             Session session = entry.getValue();
@@ -147,6 +236,7 @@ public final class WebAiSessionStore {
             }
         }
         out.put("messages", messages);
+        out.putAll(taskMeta(sid));
         return out;
     }
 
@@ -183,14 +273,24 @@ public final class WebAiSessionStore {
         }
         s.lastConversation = s.messages.isEmpty() ? 0L : System.currentTimeMillis();
         s.touch();
-        save();
+        JsonArray retained = new JsonArray();
+        for (JsonElement element : s.execution.messages) {
+            JsonObject message = element.getAsJsonObject();
+            if (longValue(message, "_turnId") < turnId) retained.add(message);
+        }
+        s.execution = new ToolConversation();
+        s.execution.messages = retained;
+        s.execution.turnId = s.messages.isEmpty() ? 0 : s.messages.getLast().turnId;
+        com.exai.service.LLMService.closePendingCalls(s.execution);
+        save(sid);
+        save(sid);
         return new RewindResult(true, removedMessages / 2, "");
     }
 
     public static synchronized void clearAll() {
         loadIfNeeded();
+        for (String id : SESSIONS.keySet()) deleteSessionFiles(id);
         SESSIONS.clear();
-        save();
     }
 
     private static boolean validId(String id) {
@@ -203,7 +303,7 @@ public final class WebAiSessionStore {
 
     private static String clip(String s) {
         if (s == null) return "";
-        return s.length() > MAX_MESSAGE_CHARS ? s.substring(0, MAX_MESSAGE_CHARS) + "..." : s;
+        return s;
     }
 
     private static boolean cleanup() {
@@ -211,12 +311,14 @@ public final class WebAiSessionStore {
         boolean changed = false;
         Iterator<Map.Entry<String, Session>> it = SESSIONS.entrySet().iterator();
         while (it.hasNext()) {
-            Session session = it.next().getValue();
+            Map.Entry<String, Session> entry = it.next();
+            Session session = entry.getValue();
             boolean expiredConversation = session.lastConversation > 0L
                     && now - session.lastConversation > CONVERSATION_RETENTION_MS;
             boolean expiredEmpty = session.lastConversation == 0L
                     && now - session.lastAccess > EMPTY_SESSION_TTL_MS;
-            if (expiredConversation || expiredEmpty) {
+            if ((expiredConversation || expiredEmpty) && !BUSY.containsKey(entry.getKey())) {
+                deleteSessionFiles(entry.getKey());
                 it.remove();
                 changed = true;
             }
@@ -224,111 +326,171 @@ public final class WebAiSessionStore {
         return changed;
     }
 
+    private static File dataRoot() {
+        return rootOverride != null ? rootOverride : ExAI.getInstance().getDataFolder();
+    }
+
+    private static File directory() { return new File(dataRoot(), "web-ai-sessions"); }
+    private static Path sessionFile(String id) { return new File(directory(), id + ".json").toPath(); }
+
     private static void loadIfNeeded() {
-        if (loaded) {
-            return;
-        }
+        if (loaded) return;
         loaded = true;
-        File file = storeFile();
-        if (!file.isFile()) {
-            return;
+        File[] files = directory().listFiles();
+        Set<String> ids = new HashSet<>();
+        if (files != null) for (File file : files) {
+            String name = file.getName();
+            if (name.endsWith(".json.bak")) name = name.substring(0, name.length() - 4);
+            if (name.endsWith(".json")) {
+                String id = name.substring(0, name.length() - 5);
+                if (validId(id)) ids.add(id);
+            }
         }
-        try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
-            JsonElement root = new JsonParser().parse(reader);
-            if (!root.isJsonObject()) {
-                return;
-            }
-            JsonElement sessions = root.getAsJsonObject().get("sessions");
-            if (sessions == null || !sessions.isJsonArray()) {
-                return;
-            }
-            for (JsonElement element : sessions.getAsJsonArray()) {
-                if (!element.isJsonObject()) {
-                    continue;
+        for (String id : ids) {
+            try {
+                JsonObject data = AtomicJsonFile.read(sessionFile(id), d -> validSnapshot(d) && id.equals(string(d, "id")));
+                Session session = decode(data);
+                if ("RUNNING".equals(session.execution.status)) {
+                    String completedText = finalResponse(session.execution);
+                    session.execution.status = completedText == null ? "INTERRUPTED" : "COMPLETED";
+                    session.execution.reason = completedText == null ? "服务器重启，等待明确继续" : "";
                 }
+                restorePendingDisplay(session);
+                SESSIONS.put(id, session);
+            } catch (Exception e) {
+                BROKEN.add(id);
+                System.err.println("读取 Web AI 会话失败: " + id + ": " + e.getMessage());
+            }
+        }
+        try { migrateLegacy(); }
+        catch (Exception e) { loaded = false; throw new IllegalStateException("迁移 Web AI 会话失败", e); }
+        cleanup();
+    }
+
+    private static String finalResponse(ToolConversation task) {
+        if (task.messages.size() == 0 || !task.pendingInput.isEmpty()) return null;
+        JsonObject last = task.messages.get(task.messages.size() - 1).getAsJsonObject();
+        if (!"assistant".equals(string(last, "role"))
+                || (last.has("tool_calls") && last.get("tool_calls").isJsonArray()
+                && last.getAsJsonArray("tool_calls").size() > 0)) return null;
+        String text = string(last, "content");
+        return text.trim().isEmpty() ? null : text;
+    }
+
+    private static void restorePendingDisplay(Session session) {
+        if (session.messages.isEmpty()) return;
+        Msg last = session.messages.getLast();
+        if (!"assistant".equals(last.role) || last.turnId != session.execution.turnId
+                || !"任务执行中，进度将逐步保存。".equals(last.content)) return;
+        String text = "COMPLETED".equals(session.execution.status) ? finalResponse(session.execution) : null;
+        if (text == null) text = "任务已停止，已保存执行进度。" + session.execution.reason
+                + (session.execution.canContinue() ? "\n可点击继续任务或输入 /continue。" : "");
+        session.messages.set(session.messages.size() - 1, new Msg("assistant", text, last.turnId));
+    }
+
+    private static boolean validSnapshot(JsonObject data) {
+        try {
+            if (data.get("formatVersion").getAsInt() != 2 || !validId(string(data, "id"))
+                    || data.get("saveVersion").getAsLong() < 1 || !data.has("execution")) return false;
+            decode(data);
+            return true;
+        } catch (Exception e) { return false; }
+    }
+
+    private static Session decode(JsonObject data) {
+        Session session = new Session();
+        session.createdAt = longValue(data, "createdAt");
+        session.lastConversation = longValue(data, "lastConversation");
+        session.lastAccess = longValue(data, "lastAccess");
+        session.saveVersion = longValue(data, "saveVersion");
+        session.nextTurnId = Math.max(1, longValue(data, "nextTurnId"));
+        for (JsonElement element : data.getAsJsonArray("messages")) {
+            JsonObject m = element.getAsJsonObject();
+            String role = m.get("role").getAsString();
+            if (!"user".equals(role) && !"assistant".equals(role)) throw new IllegalArgumentException("Invalid role");
+            long turnId = longValue(m, "turnId");
+            if (turnId <= 0) turnId = session.messages.size() / 2 + 1;
+            session.messages.add(new Msg(role, m.get("content").getAsString(), turnId));
+            session.nextTurnId = Math.max(session.nextTurnId, turnId + 1);
+        }
+        if (data.has("execution")) {
+            session.execution = GSON.fromJson(data.get("execution"), ToolConversation.class);
+            ToolConversation task = session.execution;
+            if (task == null || task.messages == null || task.summary == null || task.status == null
+                    || task.startedCalls == null || task.pendingInput == null || task.taskId == null || task.cwd == null
+                    || task.summaryThrough < 0 || task.summaryThrough > task.messages.size())
+                throw new IllegalArgumentException("Invalid execution ledger");
+            for (JsonElement element : task.messages) {
+                JsonObject m = element.getAsJsonObject();
+                String role = m.get("role").getAsString();
+                if (!"user".equals(role) && !"assistant".equals(role) && !"tool".equals(role))
+                    throw new IllegalArgumentException("Invalid ledger role");
+            }
+        } else {
+            for (Msg message : session.messages) {
+                session.execution.turnId = message.turnId;
+                session.execution.addText(message.role, message.content);
+            }
+        }
+        if (!session.messages.isEmpty() && session.lastConversation == 0)
+            session.lastConversation = session.lastAccess;
+        if (session.createdAt == 0) session.createdAt = session.lastConversation;
+        return session;
+    }
+
+    private static void migrateLegacy() throws IOException {
+        Path marker = new File(dataRoot(), "web-ai-sessions-migration.json").toPath();
+        if (AtomicJsonFile.read(marker, d -> d.has("complete") && d.get("complete").getAsBoolean()) != null) return;
+        File legacy = new File(dataRoot(), STORE_FILE);
+        if (legacy.isFile()) {
+            JsonObject root = JsonParser.parseString(new String(Files.readAllBytes(legacy.toPath()), StandardCharsets.UTF_8)).getAsJsonObject();
+            for (JsonElement element : root.getAsJsonArray("sessions")) {
                 JsonObject data = element.getAsJsonObject();
                 String id = string(data, "id");
-                if (!validId(id)) {
+                if (!validId(id) || BROKEN.contains(id)) continue;
+                if (SESSIONS.containsKey(id)) {
+                    // A prior migration attempt may have retained an unsaved session in memory.
+                    if (!Files.isRegularFile(sessionFile(id))) save(id);
                     continue;
                 }
-                Session session = new Session();
-                session.createdAt = longValue(data, "createdAt");
-                session.lastConversation = longValue(data, "lastConversation");
-                session.lastAccess = longValue(data, "lastAccess");
-                JsonElement messages = data.get("messages");
-                long fallbackTurnId = 1L;
-                if (messages != null && messages.isJsonArray()) {
-                    for (JsonElement message : messages.getAsJsonArray()) {
-                        if (!message.isJsonObject()) {
-                            continue;
-                        }
-                        JsonObject m = message.getAsJsonObject();
-                        String role = string(m, "role");
-                        if (!"user".equals(role) && !"assistant".equals(role)) {
-                            continue;
-                        }
-                        long turnId = longValue(m, "turnId");
-                        if (turnId <= 0L) {
-                            turnId = fallbackTurnId;
-                            if ("assistant".equals(role)) fallbackTurnId++;
-                        }
-                        session.nextTurnId = Math.max(session.nextTurnId, turnId + 1L);
-                        session.messages.add(new Msg(role, clip(string(m, "content")), turnId));
-                    }
-                }
-                if (!session.messages.isEmpty() && session.lastConversation == 0L) {
-                    session.lastConversation = session.lastAccess;
-                }
-                if (session.createdAt == 0L) {
-                    session.createdAt = session.lastConversation > 0L ? session.lastConversation : session.lastAccess;
-                }
-                SESSIONS.put(id, session);
+                SESSIONS.put(id, decode(data));
+                save(id);
             }
-            cleanup();
-        } catch (Exception e) {
-            ExAI.getInstance().getLogger().warning("读取 Web AI 会话失败: " + e.getMessage());
         }
+        JsonObject complete = new JsonObject();
+        complete.addProperty("complete", true);
+        AtomicJsonFile.write(marker, complete, d -> d.has("complete"));
     }
 
-    private static void save() {
-        JsonArray sessions = new JsonArray();
-        for (Map.Entry<String, Session> entry : SESSIONS.entrySet()) {
-            Session session = entry.getValue();
-            if (session.messages.isEmpty()) {
-                continue;
-            }
-            JsonObject data = new JsonObject();
-            data.addProperty("id", entry.getKey());
-            data.addProperty("createdAt", session.createdAt);
-            data.addProperty("lastConversation", session.lastConversation);
-            data.addProperty("lastAccess", session.lastAccess);
-            JsonArray messages = new JsonArray();
-            for (Msg message : session.messages) {
-                JsonObject m = new JsonObject();
-                m.addProperty("role", message.role);
-                m.addProperty("content", message.content);
-                m.addProperty("turnId", message.turnId);
-                messages.add(m);
-            }
-            data.add("messages", messages);
-            sessions.add(data);
+    private static void save(String id) {
+        Session session = SESSIONS.get(id);
+        JsonObject data = new JsonObject();
+        data.addProperty("formatVersion", 2);
+        data.addProperty("saveVersion", ++session.saveVersion);
+        data.addProperty("id", id);
+        data.addProperty("createdAt", session.createdAt);
+        data.addProperty("lastConversation", session.lastConversation);
+        data.addProperty("lastAccess", session.lastAccess);
+        data.addProperty("nextTurnId", session.nextTurnId);
+        data.add("messages", GSON.toJsonTree(session.messages));
+        data.add("execution", GSON.toJsonTree(session.execution));
+        Exception failure = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try { AtomicJsonFile.write(sessionFile(id), data, WebAiSessionStore::validSnapshot); return; }
+            catch (IOException e) { failure = e; }
         }
-        JsonObject root = new JsonObject();
-        root.add("sessions", sessions);
-        File file = storeFile();
+        throw new IllegalStateException("会话保存失败，已停止执行；内存进度保留，请修复磁盘后继续", failure);
+    }
+
+    private static void deleteSessionFiles(String id) {
+        Path file = sessionFile(id);
         try {
-            File parent = file.getParentFile();
-            if (parent != null) {
-                Files.createDirectories(parent.toPath());
-            }
-            Files.write(file.toPath(), GSON.toJson(root).getBytes(StandardCharsets.UTF_8));
-        } catch (Exception e) {
-            ExAI.getInstance().getLogger().warning("保存 Web AI 会话失败: " + e.getMessage());
-        }
-    }
-
-    private static File storeFile() {
-        return new File(ExAI.getInstance().getDataFolder(), STORE_FILE);
+            // Delete primary last, so a failure cannot resurrect a stale backup.
+            Files.deleteIfExists(AtomicJsonFile.backup(file));
+            Files.deleteIfExists(file.resolveSibling(file.getFileName() + ".tmp"));
+            Files.deleteIfExists(file.resolveSibling(file.getFileName() + ".bak.tmp"));
+            Files.deleteIfExists(file);
+        } catch (IOException e) { throw new IllegalStateException("清理会话失败: " + id, e); }
     }
 
     private static String string(JsonObject object, String key) {
@@ -351,6 +513,8 @@ public final class WebAiSessionStore {
         long lastAccess = System.currentTimeMillis();
         long lastConversation;
         long nextTurnId = 1L;
+        long saveVersion;
+        ToolConversation execution = new ToolConversation();
         void touch() { lastAccess = System.currentTimeMillis(); }
     }
 

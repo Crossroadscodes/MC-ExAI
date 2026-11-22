@@ -8,6 +8,10 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 import java.util.Map;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -30,6 +34,7 @@ public class ChatKnowledgeCollector {
 
     /** key = 提问者 UUID，仅保留每名玩家最近一条待回答问题。 */
     private static final Map<UUID, OpenQuestion> openQuestions = new ConcurrentHashMap<>();
+    private static final Deque<String> recentChat = new ArrayDeque<>();
 
     private static class OpenQuestion {
         final String askerName;
@@ -43,6 +48,7 @@ public class ChatKnowledgeCollector {
         volatile boolean thanked;
         volatile boolean finalized;
         volatile int reviewTaskId = -1;
+        volatile List<String> context = new ArrayList<>();
 
         OpenQuestion(String askerName, UUID askerUuid, String questionText, long askTime) {
             this.askerName = askerName;
@@ -54,6 +60,22 @@ public class ChatKnowledgeCollector {
 
     /** 由聊天监听器在异步线程调用。仅读取 player 的名字与 UUID，不持有 Player 引用。 */
     public static void handle(Player player, String rawMessage) {
+        handle(player, rawMessage, recordPublicChat(player.getName(), rawMessage));
+    }
+
+    /** Records every public chat line, even when knowledge auto-collection is disabled. */
+    public static List<String> recordPublicChat(String name, String rawMessage) {
+        if (rawMessage == null || rawMessage.trim().isEmpty()) return new ArrayList<>();
+        synchronized (recentChat) {
+            int limit = Math.max(0, Math.min(20, Config.autoCollectContextMessages));
+            if (limit == 0) return new ArrayList<>();
+            recentChat.addLast(name + ": " + rawMessage.trim());
+            while (recentChat.size() > limit) recentChat.removeFirst();
+            return new ArrayList<>(recentChat);
+        }
+    }
+
+    public static void handle(Player player, String rawMessage, List<String> chatContext) {
         if (!Config.autoCollectEnabled || rawMessage == null) {
             return;
         }
@@ -70,6 +92,7 @@ public class ChatKnowledgeCollector {
         if (mine != null && mine.answerText != null && !mine.finalized
                 && isThanks(message) && now - mine.answerTime <= thanksWindowMillis()) {
             mine.thanked = true;
+            mine.context = chatContext;
             triggerReview(mine);
             return;
         }
@@ -85,6 +108,7 @@ public class ChatKnowledgeCollector {
                         target.answerText = message;
                         target.answererName = name;
                         target.answerTime = now;
+                        target.context = chatContext;
                         scheduleReview(target);
                     }
                 }
@@ -93,7 +117,9 @@ public class ChatKnowledgeCollector {
 
         // 3) 问题消息 → 登记/刷新该玩家的待回答问题
         if (isQuestion) {
-            openQuestions.put(uuid, new OpenQuestion(name, uuid, message, now));
+            OpenQuestion question = new OpenQuestion(name, uuid, message, now);
+            question.context = chatContext;
+            openQuestions.put(uuid, question);
         }
     }
 
@@ -138,7 +164,7 @@ public class ChatKnowledgeCollector {
             if (Config.reviewer == null || oq.answerText == null) {
                 return;
             }
-            ReviewResult result = Config.reviewer.review(oq.questionText, oq.answerText, oq.thanked);
+            ReviewResult result = Config.reviewer.review(oq.questionText, oq.answerText, oq.thanked, oq.context);
             // AI 不可用(null) 或判定不通过 → 静默丢弃，不污染知识库
             if (result == null || !result.isPass()) {
                 String reason = result == null ? "service unavailable" : result.getReason();
@@ -147,7 +173,8 @@ public class ChatKnowledgeCollector {
                 return;
             }
             boolean added = KnowledgeManager.submitAutoCollected(
-                    oq.questionText, oq.answerText, oq.answererName, oq.thanked);
+                    oq.questionText, oq.answerText, oq.answererName, oq.thanked, result.getContextSummary(),
+                    String.join("\n", oq.context));
             if (added) {
                 ExAI.getInstance().getLogger().info(
                         Lang.get("log.auto-collected", preview(oq.questionText)));

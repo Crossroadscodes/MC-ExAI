@@ -43,6 +43,10 @@ public class Config {
     public static double llmTemperature;
     public static double minSimilarity;
     public static int maxDocs;
+    public static double hybridEmbeddingWeight;
+    public static double hybridBm25Weight;
+    public static int hybridRrfK;
+    public static int hybridCandidatePoolSize;
     public static String assistantName;
     public static int maxPendingKnowledgePerPlayer;
     public static String currencyName;
@@ -58,6 +62,7 @@ public class Config {
     public static int autoCollectAnswerWindow;
     public static int autoCollectThanksWindow;
     public static int autoCollectMinAnswerLength;
+    public static int autoCollectContextMessages = 6;
     public static String autoCollectThanksKeywords;
     public static boolean autoCollectNotifyReviewers;
     // 玩家书本提交的 AI 初审
@@ -71,6 +76,10 @@ public class Config {
     public static String documentImportVisionModel;
     public static LLMService visionLlm;
     // 网页管理服务
+    public static int webAiMaxIterations = 20;
+    public static int webAiContextMaxChars = 24000;
+    public static int webAiRecentMessageGroups = 8;
+    public static int webAiSummaryMaxChars = 4000;
     public static boolean webuiEnabled;
     public static String webuiHost;
     public static int webuiPort;
@@ -129,7 +138,25 @@ public class Config {
             chatResponseEnabled = config.getBoolean("llm.chatResponseEnabled", true);
             chatResponseSuffix = config.getString("llm.chatResponseSuffix", "");
             minSimilarity = config.getDouble("knowledge.minSimilarity", 0.35);
-            maxDocs = config.getInt("knowledge.maxDocs", 3);
+            int configuredMaxDocs = config.getInt("knowledge.maxDocs", 3);
+            maxDocs = configuredMaxDocs > 0 ? configuredMaxDocs : 3;
+            hybridEmbeddingWeight = validWeight(
+                    config.getDouble("knowledge.hybrid.embeddingWeight", 0.5));
+            hybridBm25Weight = validWeight(
+                    config.getDouble("knowledge.hybrid.bm25Weight", 0.5));
+            double hybridWeightTotal = hybridEmbeddingWeight + hybridBm25Weight;
+            if (hybridWeightTotal <= 0.0) {
+                hybridEmbeddingWeight = 0.5;
+                hybridBm25Weight = 0.5;
+            } else {
+                hybridEmbeddingWeight /= hybridWeightTotal;
+                hybridBm25Weight /= hybridWeightTotal;
+            }
+            int configuredRrfK = config.getInt("knowledge.hybrid.rrfK", 60);
+            hybridRrfK = configuredRrfK > 0 ? configuredRrfK : 60;
+            int configuredCandidatePool = config.getInt("knowledge.hybrid.candidatePoolSize", 10);
+            hybridCandidatePoolSize = Math.max(maxDocs,
+                    configuredCandidatePool > 0 ? configuredCandidatePool : 10);
             maxPendingKnowledgePerPlayer = config.getInt("knowledge.maxPendingKnowledgePerPlayer", 30);
             currencyName = config.getString("knowledge.knowledgeReview.rewards.vault.currencyName", "Coin");
             opPermission = config.getString("knowledge.knowledgeReview.opPermission", "exai.op");
@@ -137,6 +164,8 @@ public class Config {
             autoCollectAnswerWindow = config.getInt("knowledge.autoCollect.answerWindowSeconds", 60);
             autoCollectThanksWindow = config.getInt("knowledge.autoCollect.thanksWindowSeconds", 20);
             autoCollectMinAnswerLength = config.getInt("knowledge.autoCollect.minAnswerLength", 4);
+            autoCollectContextMessages = Math.max(0, Math.min(20,
+                    config.getInt("knowledge.autoCollect.contextMessages", 6)));
             autoCollectThanksKeywords = config.getString("knowledge.autoCollect.thanksKeywords",
                     "谢谢,感谢,thx,thanks,3q,谢了,多谢,懂了,明白了,学到了,解决了,有用");
             autoCollectNotifyReviewers = config.getBoolean("knowledge.autoCollect.notifyReviewers", true);
@@ -146,6 +175,10 @@ public class Config {
             documentImportTemperature = config.getDouble("knowledge.documentImport.temperature", 0.3);
             documentImportVisionModel = config.getString("knowledge.documentImport.visionModel", "").trim();
             assistantName = config.getString("assistant.name", "ExAI");
+            webAiMaxIterations = Math.max(1, config.getInt("webui.ai.maxIterations", 20));
+            webAiContextMaxChars = Math.max(4000, config.getInt("webui.ai.contextMaxChars", 24000));
+            webAiRecentMessageGroups = Math.max(1, config.getInt("webui.ai.recentMessageGroups", 8));
+            webAiSummaryMaxChars = Math.max(256, config.getInt("webui.ai.summaryMaxChars", 4000));
             webuiEnabled = config.getBoolean("webui.enabled", false);
             webuiHost = config.getString("webui.host", "127.0.0.1").trim();
             if (webuiHost.isEmpty()) {
@@ -169,7 +202,8 @@ public class Config {
             VectorStore vectorStore = new VectorStore(embeddingService);
             GameDataLoader dataLoader = new GameDataLoader();
             GameKnowledgeBase candidate = new GameKnowledgeBase(
-                    vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
+                    vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs,
+                    hybridEmbeddingWeight, hybridBm25Weight, hybridRrfK, hybridCandidatePoolSize);
             long buildVersion = KNOWLEDGE_BUILD_VERSION.incrementAndGet();
             if (knowledgeBase == null) knowledgeBase = candidate;
             candidate.initializeKnowledgeBase(() -> {
@@ -205,6 +239,10 @@ public class Config {
         return llm != null && llm.isConfigured();
     }
 
+    private static double validWeight(double weight) {
+        return Double.isNaN(weight) || Double.isInfinite(weight) || weight < 0.0 ? 0.0 : weight;
+    }
+
     public static void reloadKnowledgeBaseOnly() {
         try {
             String apiKey = config.getString("llm.apiKey");
@@ -217,7 +255,8 @@ public class Config {
             VectorStore vectorStore = new VectorStore(embeddingService);
             GameDataLoader dataLoader = new GameDataLoader();
             GameKnowledgeBase candidate = new GameKnowledgeBase(
-                    vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs);
+                    vectorStore, embeddingService, dataLoader, minSimilarity, maxDocs,
+                    hybridEmbeddingWeight, hybridBm25Weight, hybridRrfK, hybridCandidatePoolSize);
             long buildVersion = KNOWLEDGE_BUILD_VERSION.incrementAndGet();
             if (knowledgeBase == null) knowledgeBase = candidate;
             candidate.initializeKnowledgeBase(() -> {

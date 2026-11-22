@@ -13,7 +13,6 @@ import com.exai.service.QuestionClassifier;
 import com.exai.utils.CDUtils;
 import com.exai.utils.DataUtils;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -21,6 +20,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import java.util.List;
 
 public class PlayerListener implements Listener {
     private static boolean isRegistered = false;
@@ -29,10 +29,6 @@ public class PlayerListener implements Listener {
         if (!isRegistered) {
             Bukkit.getPluginManager().registerEvents(new PlayerListener(), plugin);
             isRegistered = true;
-            plugin.getLogger().info("[ReviewerNotify] PlayerJoin listener registered; permission="
-                    + Config.opPermission + ", delayTicks=40");
-        } else {
-            plugin.getLogger().info("[ReviewerNotify] PlayerJoin listener already registered; skip duplicate registration");
         }
     }
 
@@ -48,7 +44,8 @@ public class PlayerListener implements Listener {
         }
 
         // 公屏问答自动采集独立于 AI 广播开关运行
-        ChatKnowledgeCollector.handle(player, message);
+        List<String> chatContext = ChatKnowledgeCollector.recordPublicChat(playerName, message);
+        ChatKnowledgeCollector.handle(player, message, chatContext);
 
         if (!Config.chatResponseEnabled) {
             return;
@@ -68,7 +65,19 @@ public class PlayerListener implements Listener {
         }
         Bukkit.getScheduler().runTaskAsynchronously(ExAI.getInstance(), () -> {
             try {
-                QuestionClassifier.Result classification = new QuestionClassifier(Config.llm).classify(message);
+                String context = String.join("\n", chatContext);
+                QuestionClassifier classifier = new QuestionClassifier(Config.llm);
+                QuestionClassifier.Result classification = classifier.classify(message);
+                String ragQuestion = message;
+                String loggedRetrievalQuestion = "";
+                if (classification == QuestionClassifier.Result.NOT_QUESTION && !context.trim().isEmpty()) {
+                    QuestionClassifier.ContextualResult contextual = classifier.rewriteAndValidate(message, context);
+                    classification = contextual.getResult();
+                    if (classification == QuestionClassifier.Result.QUESTION) {
+                        ragQuestion = contextual.getStandaloneQuestion();
+                        loggedRetrievalQuestion = ragQuestion;
+                    }
+                }
                 if (classification != QuestionClassifier.Result.QUESTION) {
                     return;
                 }
@@ -76,7 +85,7 @@ public class PlayerListener implements Listener {
                 if (!CDUtils.isPlayerChatCDEnd()) {
                     return;
                 }
-                PlayerQuestion pQuestion = new PlayerQuestion(message);
+                PlayerQuestion pQuestion = new PlayerQuestion(ragQuestion);
                 Answer answer = Config.generator.generateBrodcastAnswer(pQuestion, false);
                 // AI 无法作答（知识库无依据）→ 不在公屏广播，避免刷屏「抱歉，找不到相关信息」
                 if (answer.isUnknown()) {
@@ -91,7 +100,7 @@ public class PlayerListener implements Listener {
                         Config.assistantName, playerName, answer.getAnswer(),
                         Config.chatResponseSuffix == null ? "" : Config.chatResponseSuffix));
                 DataUtils.insertLog(playerName, message, answer.getAnswer(), documents,
-                        Lang.get("log.source-broadcast"), answer.getStatus());
+                        Lang.get("log.source-broadcast"), answer.getStatus(), context, loggedRetrievalQuestion);
 
             } catch (Exception e) {
                 e.printStackTrace();
@@ -102,52 +111,33 @@ public class PlayerListener implements Listener {
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
-        ExAI.getInstance().getLogger().info("[ReviewerNotify] Join event received: player="
-                + player.getName() + ", uuid=" + player.getUniqueId()
-                + ", isOp=" + player.isOp() + ", permission=" + Config.opPermission
-                + ", hasPermission=" + player.hasPermission(Config.opPermission));
         // 延迟发放，确保提示在登录刷屏之后才出现
         Bukkit.getScheduler().runTaskLater(ExAI.getInstance(), () -> {
             // 玩家若已离线则跳过，避免奖励被取出却发放失败而丢失
             if (!player.isOnline()) {
-                ExAI.getInstance().getLogger().info("[ReviewerNotify] Skip notification: player="
-                        + player.getName() + " is offline after the 40-tick delay");
                 return;
             }
             // 发放离线期间累计的知识采纳奖励
             try {
                 RewardManager.deliverQueued(player);
             } catch (Exception e) {
-                ExAI.getInstance().getLogger().warning("[ReviewerNotify] Queued reward delivery failed for "
-                        + player.getName() + "; reviewer notification will continue: " + e.getMessage());
+                ExAI.getInstance().getLogger().warning("Failed to deliver queued rewards to "
+                        + player.getName() + ": " + e.getMessage());
                 e.printStackTrace();
             }
             // 提醒审核员有多少待审核知识
-            boolean isOp = player.isOp();
-            boolean hasNode = player.hasPermission(Config.opPermission);
             boolean reviewer = Config.hasOpPermission(player);
             int pending = KnowledgeQueue.getTotalCount();
-            ExAI.getInstance().getLogger().info("[ReviewerNotify] Delayed check: player="
-                    + player.getName() + ", online=true, isOp=" + isOp
-                    + ", permission=" + Config.opPermission + ", hasPermission=" + hasNode
-                    + ", reviewer=" + reviewer + ", pending=" + pending);
 
             if (!reviewer) {
-                ExAI.getInstance().getLogger().info("[ReviewerNotify] Skip notification: player="
-                        + player.getName() + " is neither OP nor granted " + Config.opPermission);
                 return;
             }
             if (pending <= 0) {
-                ExAI.getInstance().getLogger().info("[ReviewerNotify] Skip notification: pending count is "
-                        + pending + " for player=" + player.getName());
                 return;
             }
 
             String notification = Lang.get("chat.reviewer-login-notify", Config.assistantName, pending);
             player.sendMessage(notification);
-            ExAI.getInstance().getLogger().info("[ReviewerNotify] Notification sent: player="
-                    + player.getName() + ", pending=" + pending + ", message="
-                    + ChatColor.stripColor(notification));
         }, 40L);
     }
 
