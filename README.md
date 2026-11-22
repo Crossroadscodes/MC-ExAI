@@ -1,16 +1,16 @@
 # ExAI - Minecraft 智能助手插件
 
-[![Version](https://img.shields.io/badge/version-1.0.7-blue)](https://github.com/Crossroadscodes/MC-ExAI/releases/tag/v1.0.7)
+[![Version](https://img.shields.io/badge/version-1.0.8-blue)](https://github.com/Crossroadscodes/MC-ExAI/releases/tag/v1.0.8)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **Languages / 语言**: [简体中文](README.md) · [English](README_EN.md)
 
 ExAI 是一款基于大语言模型的 Minecraft 服务器智能助手插件，通过玩家和管理员共同构建的服务器专有数据库，为服务器玩家提供智能问题功能。
 
-v1.0.7更新
-- 增加Rag系统评估功能
-- 优化CLI前端
-- 优化拒答逻辑
+v1.0.8 更新
+- 增加混合检索
+- 优化文档增强逻辑
+- 优化 RAG 评估数据集标记
 ---
 
 ## 功能特性
