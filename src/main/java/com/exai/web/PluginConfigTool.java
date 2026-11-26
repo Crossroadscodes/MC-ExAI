@@ -48,8 +48,6 @@ public final class PluginConfigTool {
 
     private static final long MAX_READ_BYTES = 2_000_000L;
     private static final int MAX_LIST_ENTRIES = 200;
-    private static final int MAX_SEARCH_FILES = 100;
-    private static final int MAX_SEARCH_RESULTS = 100;
     private static final int MAX_PLUGIN_RESULTS = 20;
     private static final int MAX_SNIPPETS = 10;
     private static final int MAX_SNIPPET_CHARS = 8000;
@@ -87,11 +85,9 @@ public final class PluginConfigTool {
                 new String[]{"file", "path"}),
                 (context, args) -> getYamlValue(context.getCwd(), args));
         register(tools, tool("search_yaml_keys",
-                "Search YAML key paths by keyword under plugins/. Returns matching file/path previews with secrets masked.",
-                objProps(
-                        prop("keyword", "string", "Keyword to search in YAML key paths, e.g. webui, port, language, mysql, reward."),
-                        prop("file", "string", "Optional YAML file path relative to plugins/. If omitted, searches YAML files under plugins/ with limits.")),
-                new String[]{"keyword"}),
+                "Search YAML keys and file names with ranked, diversified results. Supply keyword or keywords. Uses file batches and result pages; exhaust next_offset in the same batch before following next_file_offset with offset=0. Reports skipped files and scan completion.",
+                searchProperties(false),
+                new String[]{}),
                 (context, args) -> searchYamlKeys(context.getCwd(), args));
         register(tools, tool("list_plugins",
                 "List plugin JARs found directly under plugins/, including plugins that are not currently loaded. Each result includes loaded to indicate runtime state. Use this first for fuzzy Chinese plugin names so the model can choose the closest candidate.",
@@ -119,12 +115,9 @@ public final class PluginConfigTool {
                 new String[]{}),
                 (context, args) -> findPluginFiles(args));
         register(tools, tool("search_yaml_values",
-                "Search YAML key paths and scalar/list value previews by keyword.",
-                objProps(
-                        prop("keyword", "string", "Keyword to search in YAML paths and values, e.g. 佣兵, mercenary."),
-                        prop("file", "string", "Optional YAML file path relative to plugins/."),
-                        prop("path", "string", "Optional YAML section path to search under.")),
-                new String[]{"keyword"}),
+                "Search complete YAML scalar/list/map values, keys and file names, never truncated previews. Secret values are excluded. Optionally search raw comments. Supply keyword or keywords. Exhaust next_offset in the same file batch before following next_file_offset with offset=0. Reports ranked, diversified results, scan counts, cache hits and skipped files.",
+                searchProperties(true),
+                new String[]{}),
                 (context, args) -> searchYamlValues(context.getCwd(), args));
         register(tools, tool("read_yaml_snippet",
                 "Read limited raw YAML snippets around a keyword or key path, preserving comments with secrets redacted.",
@@ -230,6 +223,8 @@ public final class PluginConfigTool {
                 + "遇到模糊插件名时，必须先调用 list_plugins 列出服务器所有插件，由你根据名称/描述/data_dir 判断最相似候选；不要直接把翻译词当目录名调用 list_plugin_yaml。\n"
                 + "若 list_plugins 后仍不确定，再调用 search_plugins、get_plugin_metadata 和 find_plugin_files 辅助定位。\n"
                 + "遇到模糊设置名时，先 search_yaml_keys，再 search_yaml_values，必要时 read_yaml_snippet 看注释。\n"
+                + "搜索优先指定已确认插件的 directory；可用 keywords 一次搜索中英文同义词，match_mode=any。需要注释时给 search_yaml_values 设置 include_comments=true。文件名命中不代表找到了配置项，必须继续读取确认。\n"
+                + "搜索结果的 total_matches 仅针对当前文件批次。先按 next_offset 取完该批结果，再按 next_file_offset 继续并将 offset 归零，其他参数保持不变；不能把未搜完当成不存在。检查 skipped_counts，无法读取的文件必须说明原因。\n"
                 + "片段上下文不足、配置块未结束或结果被截断时，使用 read_yaml_lines 按行继续向前或向后读取，直到相关配置块完整；根据 next_line 继续分页。无法读全时明确说明，不能猜测。\n"
                 + "中文需求可以联想到英文同义词辅助判断：佣兵=mercenary/hireling/companion/npc/soldier；远征=expedition/quest/adventure，但英文词只能用于搜索/判断，不能当作已存在目录。\n"
                 + "当前目录只在用户明确说当前目录/这里/这个文件时作为主要范围；插件发现默认从 plugins 根搜索。\n"
@@ -326,6 +321,7 @@ public final class PluginConfigTool {
             backup(f);
             conf.set(p.path, p.delete ? null : p.value);
             conf.save(f);
+            YamlContentSearch.invalidate(f);
             PENDING.remove(id);
             loadAppliedChanges();
             APPLIED.add(new AppliedChange(p));
@@ -437,6 +433,7 @@ public final class PluginConfigTool {
                 YamlConfiguration conf = YamlConfiguration.loadConfiguration(file);
                 conf.set(change.path, change.oldExists ? jsonToYamlValue(change.oldValue) : null);
                 conf.save(file);
+                YamlContentSearch.invalidate(file);
                 change.reverted = true;
                 change.revertedAt = System.currentTimeMillis();
                 reloadExai |= isExaiConfig(file);
@@ -557,26 +554,7 @@ public final class PluginConfigTool {
     }
 
     private static JsonObject searchYamlKeys(String cwd, JsonObject args) throws IOException {
-        String keyword = reqString(args, "keyword").toLowerCase();
-        String file = optString(args, "file");
-        List<File> files = new ArrayList<>();
-        if (file != null && !file.trim().isEmpty()) {
-            files.add(requireYaml(cwd, file, true));
-        } else {
-            collectYamlFiles(resolve(cwd, null), files, MAX_SEARCH_FILES);
-        }
-        JsonObject out = ok();
-        out.addProperty("keyword", keyword);
-        JsonArray results = new JsonArray();
-        for (File f : files) {
-            if (results.size() >= MAX_SEARCH_RESULTS) break;
-            if (f.length() > MAX_READ_BYTES) continue;
-            YamlConfiguration conf = YamlConfiguration.loadConfiguration(f);
-            searchSection(toRel(f), conf, "", keyword, results);
-        }
-        out.add("results", results);
-        out.addProperty("truncated", results.size() >= MAX_SEARCH_RESULTS || files.size() >= MAX_SEARCH_FILES);
-        return out;
+        return searchYaml(cwd, args, true);
     }
 
     private static JsonObject listPlugins(JsonObject args) throws Exception {
@@ -698,23 +676,24 @@ public final class PluginConfigTool {
     }
 
     private static JsonObject searchYamlValues(String cwd, JsonObject args) throws IOException {
-        String keyword = reqString(args, "keyword").toLowerCase();
+        return searchYaml(cwd, args, false);
+    }
+
+    private static JsonObject searchYaml(String cwd, JsonObject args, boolean keysOnly) throws IOException {
+        YamlContentSearch.keywords(args);
         String file = optString(args, "file");
-        String path = optString(args, "path");
-        List<File> files = new ArrayList<>();
-        if (file != null && !file.trim().isEmpty()) files.add(requireYaml(cwd, file, true));
-        else collectYamlFiles(WebServer.pluginsRoot(), files, MAX_SEARCH_FILES);
-        JsonObject out = ok();
-        JsonArray results = new JsonArray();
-        for (File f : files) {
-            if (results.size() >= MAX_SEARCH_RESULTS) break;
-            YamlConfiguration conf = YamlConfiguration.loadConfiguration(f);
-            ConfigurationSection sec = (path == null || path.trim().isEmpty()) ? conf : conf.getConfigurationSection(path);
-            if (sec != null) searchValues(toRel(f), sec, path == null ? "" : path, keyword, results);
+        String directory = optString(args, "directory");
+        File root = WebServer.pluginsRoot();
+        File scope = directory == null || directory.trim().isEmpty() ? root : WebServer.resolveSafe(directory);
+        if (directory != null && !scope.isDirectory()) throw new FileNotFoundException("Search directory not found");
+        if (file != null && !file.trim().isEmpty()) {
+            File selected = resolve(cwd, file);
+            if (!selected.isFile()) throw new FileNotFoundException("Search file not found");
+            if (!isYamlName(selected.getName())) throw new IllegalArgumentException("Only YAML files can be searched");
+            if (!selected.toPath().startsWith(scope.toPath())) throw new SecurityException("File outside search directory");
+            scope = selected;
         }
-        out.add("results", results);
-        out.addProperty("truncated", results.size() >= MAX_SEARCH_RESULTS || files.size() >= MAX_SEARCH_FILES);
-        return out;
+        return YamlContentSearch.search(root, scope, args, keysOnly);
     }
 
     private static JsonObject readYamlSnippet(String cwd, JsonObject args) throws IOException {
@@ -858,6 +837,28 @@ public final class PluginConfigTool {
         return o;
     }
 
+    private static JsonObject searchProperties(boolean values) {
+        JsonObject properties = objProps(
+                prop("keyword", "string", "One keyword. Supply keyword and/or keywords; 1-10 distinct nonempty terms total."),
+                prop("keywords", "array", "Alternative or additional keywords, e.g. [佣兵, mercenary]."),
+                prop("match_mode", "string", "any (default) for synonyms; all requires every keyword in one result's path/value/file context."),
+                prop("file", "string", "Optional single YAML file relative to plugins/."),
+                prop("directory", "string", "Optional plugin directory relative to plugins/, e.g. MythicMobs. Default is plugins root, not cwd."),
+                prop("path", "string", "Optional YAML key/section prefix; comments are only searched without a path filter."),
+                prop("file_offset", "integer", "File batch offset, default 0. Continue with next_file_offset after consuming result pages."),
+                prop("file_limit", "integer", "Files to process per batch, 1-100, default 100."),
+                prop("offset", "integer", "Result offset within this file batch, default 0. Continue with next_offset."),
+                prop("limit", "integer", "Results per response, 1-100, default 30."),
+                prop("per_file_limit", "integer", "Diversification group size per file, 1-100, default 5. Additional hits remain available on later pages."));
+        JsonObject item = new JsonObject(); item.addProperty("type", "string");
+        properties.getAsJsonObject("keywords").add("items", item);
+        if (values) {
+            JsonObject comment = prop("include_comments", "boolean", "Also search full raw YAML comments (not block scalar contents); default false. Returns line numbers and masked comment previews.");
+            properties.add("include_comments", comment.get("include_comments"));
+        }
+        return properties;
+    }
+
     private static JsonObject prop(String name, String type, String desc) {
         JsonObject spec = new JsonObject();
         spec.addProperty("type", type);
@@ -944,18 +945,6 @@ public final class PluginConfigTool {
         return f.getCanonicalFile().equals(cfg);
     }
 
-    private static void collectYamlFiles(File dir, List<File> out, int max) {
-        if (dir == null || !dir.isDirectory() || out.size() >= max) return;
-        File[] files = dir.listFiles();
-        if (files == null) return;
-        Arrays.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
-        for (File f : files) {
-            if (out.size() >= max) return;
-            if (f.isDirectory()) collectYamlFiles(f, out, max);
-            else if (isYamlName(f.getName()) && f.length() <= MAX_READ_BYTES) out.add(f);
-        }
-    }
-
     private static void collectFileEntries(File root, JsonArray out, boolean yamlOnly, String keyword, int max) throws IOException {
         if (root == null || !root.exists() || out.size() >= max) return;
         String kw = keyword == null ? "" : keyword.toLowerCase();
@@ -983,64 +972,6 @@ public final class PluginConfigTool {
                 collectFileEntries(f, out, yamlOnly, keyword, max);
             } else {
                 collectFileEntries(f, out, yamlOnly, keyword, max);
-            }
-        }
-    }
-
-    private static void searchSection(String fileRel, ConfigurationSection sec, String prefix, String keyword, JsonArray results) {
-        if (results.size() >= MAX_SEARCH_RESULTS) return;
-        for (String k : sec.getKeys(false)) {
-            if (results.size() >= MAX_SEARCH_RESULTS) return;
-            String path = prefix.isEmpty() ? k : prefix + "." + k;
-            boolean hit = path.toLowerCase().contains(keyword) || fileRel.toLowerCase().contains(keyword);
-            boolean section = sec.isConfigurationSection(k);
-            if (hit) {
-                JsonObject r = new JsonObject();
-                r.addProperty("file", fileRel);
-                r.addProperty("path", path);
-                r.addProperty("section", section);
-                if (!section) {
-                    Object v = sec.get(k);
-                    r.addProperty("type", typeOf(v));
-                    boolean secret = isSecretPath(path);
-                    r.addProperty("preview", secret ? "******" : preview(v));
-                    if (secret) r.addProperty("masked", true);
-                }
-                results.add(r);
-            }
-            if (section) searchSection(fileRel, sec.getConfigurationSection(k), path, keyword, results);
-        }
-    }
-
-    private static void searchValues(String fileRel, ConfigurationSection sec, String prefix, String keyword, JsonArray results) {
-        if (results.size() >= MAX_SEARCH_RESULTS) return;
-        for (String k : sec.getKeys(false)) {
-            if (results.size() >= MAX_SEARCH_RESULTS) return;
-            String path = prefix == null || prefix.isEmpty() ? k : prefix + "." + k;
-            boolean section = sec.isConfigurationSection(k);
-            if (section) {
-                searchValues(fileRel, sec.getConfigurationSection(k), path, keyword, results);
-                continue;
-            }
-            Object v = sec.get(k);
-            String prev = preview(v);
-            String lowerPath = path.toLowerCase();
-            String lowerPrev = prev.toLowerCase();
-            String lowerFile = fileRel.toLowerCase();
-            String matched = null;
-            if (lowerPath.contains(keyword)) matched = "path";
-            else if (lowerPrev.contains(keyword)) matched = "value";
-            else if (lowerFile.contains(keyword)) matched = "file";
-            if (matched != null) {
-                boolean secret = isSecretPath(path);
-                JsonObject r = new JsonObject();
-                r.addProperty("file", fileRel);
-                r.addProperty("path", path);
-                r.addProperty("type", typeOf(v));
-                r.addProperty("preview", secret ? "******" : prev);
-                r.addProperty("matched_in", matched);
-                if (secret) r.addProperty("masked", true);
-                results.add(r);
             }
         }
     }
@@ -1151,7 +1082,7 @@ public final class PluginConfigTool {
         return dot >= 0 ? p.substring(dot + 1) : p;
     }
 
-    private static String redactSecretLine(String line) {
+    static String redactSecretLine(String line) {
         String t = line.trim();
         int colon = t.indexOf(':');
         if (colon <= 0) return line;
@@ -1212,16 +1143,18 @@ public final class PluginConfigTool {
         }
     }
 
-    private static boolean isSecretPath(String path) {
+    static boolean isSecretPath(String path) {
         if (path == null) return false;
         String[] parts = path.split("\\.");
-        String last = parts.length == 0 ? path : parts[parts.length - 1];
-        String s = last.toLowerCase().replace("_", "").replace("-", "");
-        return s.contains("password") || s.contains("passwd") || s.equals("pwd") || s.contains("secret")
-                || s.contains("token") || s.contains("apikey") || s.contains("credential");
+        for (String part : parts) {
+            String normalized = part.toLowerCase(java.util.Locale.ROOT).replace("_", "").replace("-", "");
+            if (normalized.contains("password") || normalized.contains("passwd") || normalized.equals("pwd") || normalized.contains("secret")
+                    || normalized.contains("token") || normalized.contains("apikey") || normalized.contains("credential")) return true;
+        }
+        return false;
     }
 
-    private static JsonElement valueToJson(Object v, boolean maskSecret, String path) {
+    static JsonElement valueToJson(Object v, boolean maskSecret, String path) {
         if (maskSecret || isSecretPath(path)) return new JsonPrimitive("******");
         if (v == null) return JsonNull.INSTANCE;
         if (v instanceof Boolean) return new JsonPrimitive((Boolean) v);

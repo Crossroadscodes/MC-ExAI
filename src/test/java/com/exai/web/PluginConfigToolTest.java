@@ -52,6 +52,19 @@ public class PluginConfigToolTest {
     }
 
     @Test
+    public void searchSchemasDescribeBatchPagingScopesAndMultipleKeywords() {
+        for (String name : Arrays.asList("search_yaml_keys", "search_yaml_values")) {
+            JsonObject properties = PluginConfigTool.toolSchema(name).getAsJsonObject("function")
+                    .getAsJsonObject("parameters").getAsJsonObject("properties");
+            for (String key : Arrays.asList("directory", "keywords", "match_mode", "file_offset", "file_limit", "offset", "limit", "per_file_limit")) {
+                assertTrue(properties.has(key));
+            }
+            assertEquals("string", properties.getAsJsonObject("keywords").getAsJsonObject("items").get("type").getAsString());
+        }
+        assertTrue(PluginConfigTool.toolSchema("search_yaml_values").toString().contains("include_comments"));
+    }
+
+    @Test
     public void unknownAndNullNamesAreStructuredFailures() {
         for (String name : Arrays.asList("unknown_tool", null)) {
             assertFalse(PluginConfigTool.hasTool(name));

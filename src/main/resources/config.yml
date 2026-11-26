@@ -23,6 +23,7 @@ storage-data:
 webui:
   # 网页 AI 任务记忆：每次运行的轮数、上下文字符预算及自动摘要设置。
   ai:
+    debug: false
     maxIterations: 20
     contextMaxChars: 24000
     recentMessageGroups: 8

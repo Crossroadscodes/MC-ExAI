@@ -5,6 +5,7 @@ import com.google.gson.*;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
@@ -17,18 +18,98 @@ public final class TokenUsageStore {
     private TokenUsageStore() {}
 
     public static synchronized void record(String model, JsonObject usage) {
+        record(model, usage, false, 0L, null, null);
+    }
+
+    public static synchronized void record(String model, JsonObject usage, boolean streaming,
+                                           long durationMs, JsonObject response, Exception error) {
         load();
         String date = new SimpleDateFormat("yyyy-MM-dd").format(new Date());
         Day day = DAYS.computeIfAbsent(date, k -> new Day());
         Model total = day.models.computeIfAbsent(model == null ? "unknown" : model, k -> new Model());
         total.calls++;
-        if (usage == null || !usage.has("total_tokens")) total.unknown++;
+        boolean unknown = error != null || !validTotal(usage);
+        if (unknown) total.unknown++;
         else {
             total.prompt += number(usage, "prompt_tokens");
             total.completion += number(usage, "completion_tokens");
             total.total += number(usage, "total_tokens");
         }
         save();
+        if (unknown) diagnose(model, usage, streaming, durationMs, response, error);
+    }
+
+    private static boolean validTotal(JsonObject usage) {
+        if (usage == null || !usage.has("total_tokens")) return false;
+        JsonElement value = usage.get("total_tokens");
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) return false;
+        try { return value.getAsBigDecimal().longValueExact() >= 0; }
+        catch (RuntimeException e) { return false; }
+    }
+
+    private static void diagnose(String model, JsonObject usage, boolean streaming, long durationMs,
+                                 JsonObject response, Exception error) {
+        try {
+            Date now = new Date();
+            JsonObject event = new JsonObject();
+            event.addProperty("timestamp", new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX").format(now));
+            event.addProperty("model", model == null ? "unknown" : model);
+            event.addProperty("streaming", streaming);
+            event.addProperty("durationMs", Math.max(0L, durationMs));
+            String reason = error != null ? "request_failed" : usage == null ? "missing_usage"
+                    : !usage.has("total_tokens") ? "missing_total_tokens" : "invalid_total_tokens";
+            event.addProperty("reason", reason);
+            event.addProperty("responseObserved", response != null);
+            event.addProperty("responseHasError", response != null && response.has("error"));
+            event.addProperty("usageObserved", usage != null);
+            event.addProperty("usageType", jsonType(response == null ? null : response.get("usage")));
+            event.addProperty("totalTokensType", jsonType(usage == null ? null : usage.get("total_tokens")));
+            JsonObject counters = new JsonObject();
+            if (usage != null) for (String key : new String[]{"prompt_tokens", "completion_tokens", "total_tokens"}) {
+                JsonElement value = usage.get(key);
+                if (value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
+                    counters.add(key, value);
+                }
+            }
+            event.add("reportedTokens", counters);
+            if (error != null) {
+                event.addProperty("errorType", error.getClass().getSimpleName());
+                String message = error.getMessage();
+                java.util.regex.Matcher status = java.util.regex.Pattern.compile("^HTTP ([0-9]{3}):").matcher(message == null ? "" : message);
+                if (status.find()) {
+                    event.addProperty("failureKind", "http_error");
+                    event.addProperty("httpStatus", Integer.parseInt(status.group(1)));
+                } else if (error instanceof java.net.SocketTimeoutException) {
+                    event.addProperty("failureKind", "timeout");
+                } else if (error instanceof java.net.UnknownHostException) {
+                    event.addProperty("failureKind", "dns_error");
+                } else if (error instanceof java.net.ConnectException) {
+                    event.addProperty("failureKind", "connection_failed");
+                } else if ("模型流式响应在结束标记前断开".equals(message)) {
+                    event.addProperty("failureKind", "stream_interrupted");
+                } else {
+                    event.addProperty("failureKind", error instanceof java.io.IOException ? "io_error" : "invalid_response");
+                }
+            }
+            File root = file().getAbsoluteFile().getParentFile();
+            if ("data".equals(root.getName())) root = root.getParentFile();
+            File directory = new File(root, "logs");
+            Files.createDirectories(directory.toPath());
+            File log = new File(directory, "token-usage-" + new SimpleDateFormat("yyyy-MM-dd").format(now) + ".jsonl");
+            Files.write(log.toPath(), (GSON.toJson(event) + "\n").getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (Exception e) {
+            System.err.println("Unable to write token usage diagnostics: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private static String jsonType(JsonElement value) {
+        if (value == null) return "missing";
+        if (value.isJsonNull()) return "null";
+        if (value.isJsonObject()) return "object";
+        if (value.isJsonArray()) return "array";
+        if (value.getAsJsonPrimitive().isNumber()) return "number";
+        return value.getAsJsonPrimitive().isBoolean() ? "boolean" : "string";
     }
 
     public static synchronized List<Map<String, Object>> recent(int days) {

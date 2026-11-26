@@ -30,9 +30,24 @@ v1.0.8 更新
 - 每次任务最多请求模型 20 轮，达到上限后保存进度并暂停。点击“继续任务”、输入 `/continue` 或单独输入“继续”可恢复；普通新需求会结束旧暂停任务并取消其待确认预览。
 - 新聊天记录完整保存，模型上下文独立保留工具调用与结果；超过预算时自动摘要旧内容。摘要复用已配置模型，会产生额外调用，但不计入任务的 20 轮额度。
 - `webui.ai` 可设置 `maxIterations`（20）、`contextMaxChars`（24000）、`recentMessageGroups`（8）和 `summaryMaxChars`（4000）。字符预算不是 token 数，也不包含系统提示词。
+- `webui.ai.debug` 默认 `false`。设为 `true` 后执行 `/exai reload`，工具调试日志按天追加到 `plugins/ExAI/logs/tool-debug/YYYY-MM-DD.jsonl`，记录工具开始/结束、任务与调用 ID、轮次、文件/键路径、耗时、结果数量、错误状态及恢复标记。配置值、搜索词、返回正文和原始异常消息不写入日志；日志保留目标路径等元数据，请限制访问并按需归档或清理。关闭后停止写入，已有日志保留，会话存档不受影响。
 - 记忆保存于 `plugins/ExAI/web-ai-sessions/<会话ID>.json`，使用临时文件替换及 `.bak` 恢复。旧 `web-ai-sessions.json` 自动迁移并保留原文件；迁移完成标记为 `web-ai-sessions-migration.json`。距最后对话超过 30 天的会话在访问时清理。
+- Token 用量未知时，诊断记录追加到 `plugins/ExAI/logs/token-usage-YYYY-MM-DD.jsonl`，每行一个 JSON，包含时间、模型、流式状态、耗时、用量缺失或无效原因，以及请求异常的类型和 HTTP 状态码（如有）。不记录密钥、对话正文、完整响应或原始异常消息。旧的 `unknown` 汇总无法追溯补全；日志不自动清理，可按需归档或删除。
 - 重启或连接中断后需明确继续，不自动重放已有结果的工具。待确认预览仍保留原有 10 分钟期限，重启后失效，需要重新生成并确认；历史配置值在修改前仍需核实。
 - 尚处于测试阶段，可能存在风险，欢迎提供反馈
+
+#### 配置内容搜索
+- `search_yaml_keys` / `search_yaml_values` 保留原工具名及单个 `keyword` 参数，也支持 `keywords` 数组（合计 1–10 个词）。`match_mode: "any"` 用于同义词，`"all"` 要求同一结果的键路径、值、文件名上下文覆盖所有词。值搜索匹配完整字符串、多行值及列表/映射内容，仅返回的预览截为 80 字符；敏感路径及嵌套敏感值仍脱敏，不按秘密值内容命中。
+- `directory` 指定相对 `plugins/` 的插件目录，省略时两个工具均搜索插件根目录，不跟随当前终端目录；`file` 可限定单个 YAML，`path` 限定键/节前缀。`include_comments: true` 为值搜索增加原始全文注释匹配，返回行号及脱敏预览，不把引号内的 `#` 或块标量当注释；注释搜索仅在未指定 `path` 时启用。
+- 文件按相对路径稳定排序，`file_offset` / `file_limit` 选择文件批次（默认及最大 100 个）；`offset` / `limit` 选择该批的结果页（默认 30，最大 100）。**先保持其他参数不变，按 `next_offset` 取完当前批结果，再按 `next_file_offset` 切换批次并把 `offset` 归零。** 文件增删或内容改变后应从头搜索，分页不提供跨请求快照。
+- 响应包含 `total_files`、`scanned_files`（成功读取解析数）、`processed_files`（本批尝试数）、`total_matches`（本批命中总数）、`cache_hits` / `cache_misses`。`scan_complete` 表示无后续文件批次，`results_complete` 表示当前批无后续结果页；`complete` 还要求本次无跳过项。`skipped_counts` 汇总过大、无效 YAML、权限/读盘错误、读时变化、符号链接等原因，`skipped` 最多列出 100 条明细，跳过不等于没有匹配。
+- `matched_in` / `matched_fields` 区分 `file`、`path`、`value`、`comment`，按相关性排序；文件名命中每文件只返回一条，不扩散到所有键。`per_file_limit` 默认 5，是每轮多样化排序组大小而非丢弃上限，同文件其余命中可在后续结果页取回。排序仅针对本批文件，并非全目录的全局排名。
+- 解析缓存按规范文件路径、修改时间、大小复用，LRU 最多 128 个文件、源文件大小合计最多 32 MB。确认修改及回滚会主动失效缓存；目录枚举仍在每次请求执行。外部工具若同时保留修改时间和大小，需重启插件以清除可能的旧缓存。
+
+例如，调用 `search_yaml_values`：
+```json
+{"directory":"MythicMobs","keywords":["佣兵","mercenary"],"match_mode":"any","include_comments":true,"file_limit":100,"limit":30}
+```
 ---
 
 ## 安装

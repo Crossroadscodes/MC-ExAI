@@ -77,6 +77,7 @@ public class Config {
     public static LLMService visionLlm;
     // 网页管理服务
     public static int webAiMaxIterations = 20;
+    public static volatile boolean webAiDebug = false;
     public static int webAiContextMaxChars = 24000;
     public static int webAiRecentMessageGroups = 8;
     public static int webAiSummaryMaxChars = 4000;
@@ -176,6 +177,7 @@ public class Config {
             documentImportVisionModel = config.getString("knowledge.documentImport.visionModel", "").trim();
             assistantName = config.getString("assistant.name", "ExAI");
             webAiMaxIterations = Math.max(1, config.getInt("webui.ai.maxIterations", 20));
+            webAiDebug = config.getBoolean("webui.ai.debug", false);
             webAiContextMaxChars = Math.max(4000, config.getInt("webui.ai.contextMaxChars", 24000));
             webAiRecentMessageGroups = Math.max(1, config.getInt("webui.ai.recentMessageGroups", 8));
             webAiSummaryMaxChars = Math.max(256, config.getInt("webui.ai.summaryMaxChars", 4000));

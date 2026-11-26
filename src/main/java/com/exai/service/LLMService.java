@@ -220,6 +220,7 @@ public class LLMService {
             return ToolChatResult.paused(state.reason, state.iterations);
         } catch (Exception e) {
             state.status = "FAILED";
+            ToolDebugLog.taskFailed(model, state, e);
             state.reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             try { checkpoint.save(); } catch (Exception saveError) { state.reason = saveError.getMessage(); }
             return new ToolChatResult(false, null, state.reason, state.iterations);
@@ -239,14 +240,19 @@ public class LLMService {
         body.addProperty("stream", true);
         StreamAccumulator acc = new StreamAccumulator(listener);
         final JsonObject[] usage = new JsonObject[1];
+        final JsonObject[] lastResponse = new JsonObject[1];
+        long started = System.nanoTime();
         try {
             HttpJsonClient.postJsonStream(baseUrl + "/chat/completions", apiKey, body, acc,
-                    data -> { if (data.has("usage") && data.get("usage").isJsonObject()) usage[0] = data.getAsJsonObject("usage"); });
-            TokenUsageStore.record(model, usage[0]);
-        } catch (IOException e) {
-            TokenUsageStore.record(model, null);
+                    data -> {
+                        lastResponse[0] = data;
+                        if (data.has("usage") && data.get("usage").isJsonObject()) usage[0] = data.getAsJsonObject("usage");
+                    });
+        } catch (IOException | RuntimeException e) {
+            TokenUsageStore.record(model, usage[0], true, (System.nanoTime() - started) / 1_000_000L, lastResponse[0], e);
             throw e;
         }
+        TokenUsageStore.record(model, usage[0], true, (System.nanoTime() - started) / 1_000_000L, lastResponse[0], null);
         if (!acc.done) throw new IOException("模型流式响应中断，未执行不完整的工具调用");
         checkFinishReason(acc.finishReason);
         return acc.toAssistantMessage();
@@ -280,6 +286,7 @@ public class LLMService {
             boolean uncertain = state.startedCalls.contains(id);
             if (!uncertain) state.startedCalls.add(id);
             checkpoint.save();
+            ToolDebugLog.Call debug = ToolDebugLog.start(model, state, call, uncertain);
             if (listener != null) listener.onToolCallStarted(name == null ? "unknown" : name);
             JsonObject result;
             if (uncertain && !isReadOnlyTool(name)) {
@@ -288,10 +295,13 @@ public class LLMService {
                     JsonObject fn = call.getAsJsonObject().getAsJsonObject("function");
                     if (executor != null) recovered = executor.recover(name,
                             JsonParser.parseString(str(fn, "arguments")).getAsJsonObject());
-                } catch (RuntimeException ignored) { }
+                } catch (RuntimeException error) {
+                    if (debug != null) debug.failed(error);
+                }
                 result = toolMessage(id, recovered == null
                         ? errorJson("上次调用执行结果未知，禁止直接重放。请核查当前配置和确认项，再决定是否生成新预览。") : recovered);
-            } else result = runToolCall(executor, call);
+            } else result = runToolCall(executor, call, debug);
+            if (debug != null) debug.finish(result);
             state.add(result);
             state.startedCalls.remove(id);
             checkpoint.save();
@@ -366,7 +376,7 @@ public class LLMService {
         }
     }
 
-    private JsonObject runToolCall(ToolExecutor executor, JsonElement el) {
+    private JsonObject runToolCall(ToolExecutor executor, JsonElement el, ToolDebugLog.Call debug) {
         String id = "";
         JsonObject result;
         try {
@@ -385,6 +395,7 @@ public class LLMService {
                             ? new JsonObject()
                             : JsonParser.parseString(argText).getAsJsonObject();
                 } catch (Exception pe) {
+                    if (debug != null) debug.failed(pe);
                     args = new JsonObject();
                     result = errorJson("工具参数不是合法 JSON: " + pe.getMessage());
                     return toolMessage(id, result);
@@ -398,11 +409,13 @@ public class LLMService {
                             result = errorJson("工具返回 null");
                         }
                     } catch (Exception ex) {
+                        if (debug != null) debug.failed(ex);
                         result = errorJson("工具执行失败: " + ex.getMessage());
                     }
                 }
             }
         } catch (Exception e) {
+            if (debug != null) debug.failed(e);
             result = errorJson("解析 tool_call 失败: " + e.getMessage());
         }
         return toolMessage(id, result);
@@ -497,16 +510,18 @@ public class LLMService {
     }
 
     private JsonObject postTracked(JsonObject body) throws IOException {
+        long started = System.nanoTime();
+        JsonObject response;
         try {
-            JsonObject response = HttpJsonClient.postJson(baseUrl + "/chat/completions", apiKey, body);
-            JsonObject usage = response != null && response.has("usage") && response.get("usage").isJsonObject()
-                    ? response.getAsJsonObject("usage") : null;
-            TokenUsageStore.record(model, usage);
-            return response;
-        } catch (IOException e) {
-            TokenUsageStore.record(model, null);
+            response = HttpJsonClient.postJson(baseUrl + "/chat/completions", apiKey, body);
+        } catch (IOException | RuntimeException e) {
+            TokenUsageStore.record(model, null, false, (System.nanoTime() - started) / 1_000_000L, null, e);
             throw e;
         }
+        JsonObject usage = response != null && response.has("usage") && response.get("usage").isJsonObject()
+                ? response.getAsJsonObject("usage") : null;
+        TokenUsageStore.record(model, usage, false, (System.nanoTime() - started) / 1_000_000L, response, null);
+        return response;
     }
 
     private static String parseContent(JsonObject resp) {
